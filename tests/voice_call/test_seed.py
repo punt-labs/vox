@@ -23,6 +23,18 @@ def test_seed_lists_projects_and_workers_newest_first() -> None:
     assert [w["worker_id"] for w in workers] == ["bbb", "a"]
 
 
+def test_seed_names_each_worker_by_spoken_state_and_lifecycle() -> None:
+    worker = payload("a", worker_seq=3, prompt_epoch=0)
+    brief = _state(CallSeed(("/repo",), [worker]).prompt())["workers"][0]
+    assert (brief["state"], brief["lifecycle"]) == ("working", "ready")
+
+
+def test_seed_role_says_what_state_and_lifecycle_mean() -> None:
+    role = CallSeed.baseline()
+    assert "state is working, blocked, idle or finished" in role
+    assert "lifecycle is" in role
+
+
 def test_seed_maps_explicit_answers_and_reasks_ambiguous_ones() -> None:
     prompt = CallSeed(("/repo",), []).prompt()
     assert "choice=approve for an explicit yes" in prompt

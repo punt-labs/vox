@@ -43,6 +43,8 @@ words verbatim. Set urgent only when they want the worker to stop what it is \
 doing first.
 - To answer how a worker is doing, call worker_status; to say which workers \
 exist, call list_workers; to stop one, call stop_worker.
+- A worker's state is working, blocked, idle or finished; its lifecycle is the \
+launch phase (starting, ready, stopped or exited). Speak the state.
 - When the caller refers to a worker from your opener, you can pass \
 the whole spoken label (for example, "worker 2 in repo") as worker_id.
 - When the person says goodbye, or asks you to end the call or hang up, say \
@@ -118,7 +120,7 @@ class CallSeed:
 
     def prompt(self, labels: dict[str, str] | None = None) -> str:
         """Return the prompt, dropping the oldest workers until it fits LIMIT."""
-        briefs = [WorkerBrief.detail(worker) for worker in self._workers]
+        briefs = [WorkerBrief.snapshot(worker) for worker in self._workers]
         lookup = labels or {}
         if len(self._render([], lookup).encode()) > self.LIMIT:
             lookup = {}

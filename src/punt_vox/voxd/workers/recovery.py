@@ -33,8 +33,15 @@ class WorkerRecovery:
                 logger.warning(
                     "Worker %s hook checkpoint unavailable (%s)",
                     record.id,
-                    type(exc).__name__,
+                    WorkerRecovery.reason(exc),
                 )
+
+    @staticmethod
+    def reason(exc: Exception) -> str:
+        """Name the failure by type, and the missing field for a KeyError."""
+        if isinstance(exc, KeyError) and exc.args:
+            return f"KeyError: missing {exc.args[0]!r}"
+        return type(exc).__name__
 
     @staticmethod
     def checkpoint(record: WorkerRecord) -> WorkerHookCheckpoint | None:

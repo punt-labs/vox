@@ -4,45 +4,33 @@ Run through ``make verify-call``. It spends ElevenLabs credits and plays audio
 on this machine, so it is never part of ``make check``. The call goes through
 the installed voxd to the real ElevenLabs agent; the caller's turns are
 generated here with macOS ``say`` and ``ffmpeg`` so no audio is committed.
+The call also starts one read-only worker, asks what it is doing and stops it;
+any worker the run started and the agent left behind is stopped afterwards.
 """
 
 from __future__ import annotations
 
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Final, Literal, Self, final
+from typing import Final, Self, cast, final
 
-__all__ = ["Judge", "Verdict", "is_final", "is_live", "load_trace", "script_plan"]
+from verify_judge import TIMEOUT_EXIT, Judge, is_final
+from verify_script import PCM_BYTES_PER_S, launch_timeout_s, script_plan
+from verify_workers import Cleanup, WorkerFleet
 
-_CALL_TIMEOUT_S: Final = 300
+__all__ = ["CallRun", "Trace", "is_live", "load_trace", "main", "trace_path"]
+
 _STOP_TIMEOUT_S: Final = 30
 _KEYS_ENV: Final = Path.home() / ".punt-labs" / "vox" / "keys.env"
-_OLD_OPENER: Final = re.compile(r"start,? steer,? check,? and stop coding", re.I)
-_NAG: Final = re.compile(r"are you (still )?there|still there", re.I)
-_MARKDOWN: Final = re.compile(r"(^|\s)#{1,6}\s|\*\*|`|^\s*[-*]\s", re.M)
-_LEAD_IN_S: Final = 6  # Silence before the caller speaks, so the greeting is whole.
-_DOCS_TURN: Final = (
-    "What is the Python SDK repository for the Model Context Protocol? "
-    "Look it up in the docs."
-)
-_SEARCH_TURN: Final = (
-    "Please search the web for the latest open source language models."
-)
-_SILENCE_TURN: Final = "Give me a minute, I need to think."
-
-_FINAL_STATES: Final = ("call ended", "call failed")
 _SETTLE_POLLS: Final = 10
 _SETTLE_WAIT_S: Final = 2.0
-
-type Status = Literal["PASS", "FAIL", "SKIP"]
 
 
 def is_live(status: str) -> bool:
@@ -51,251 +39,244 @@ def is_live(status: str) -> bool:
     return first.startswith(("call live", "call connecting"))
 
 
-def load_trace(status: str) -> list[dict[str, object]] | None:
-    """Return the trace rows named by the status text's ``trace:`` line, if readable."""
+def trace_path(status: str) -> str:
+    """Return the file named by the text's ``trace:`` line, or '' if it has none."""
     for line in status.splitlines():
         if line.startswith("trace: "):
-            try:
-                text = Path(line[len("trace: ") :]).read_text(encoding="utf-8")
-            except OSError:
-                return None
-            return [json.loads(row) for row in text.splitlines() if row.strip()]
-    return None
-
-
-def is_final(status: str) -> bool:
-    """Return whether ``vox call status`` text reports a call that has ended."""
-    first = status.splitlines()[0] if status.strip() else ""
-    return first.startswith(_FINAL_STATES)
+            return line[len("trace: ") :]
+    return ""
 
 
 @dataclass(frozen=True, slots=True)
-class Turn:
-    """One scripted caller turn: what is said ("" is silence) and the pause after."""
+class Trace:
+    """The object rows of a call trace, and how many other rows it held."""
 
-    text: str
-    pause_s: int
-
-
-def script_plan(*, search: bool) -> list[Turn]:
-    """Return the caller's turns: a silent lead-in, docs, search if set up, silence."""
-    plan = [Turn("", _LEAD_IN_S), Turn(_DOCS_TURN, 45)]
-    if search:
-        plan.append(Turn(_SEARCH_TURN, 30))
-    plan.append(Turn(_SILENCE_TURN, 40))
-    return plan
+    rows: list[dict[str, object]]
+    dropped: int  # Rows that were valid JSON but not objects.
 
 
-@dataclass(frozen=True, slots=True)
-class Verdict:
-    """One expectation, its outcome and why."""
+def report_of(launch_output: str) -> str:
+    """Return the end-of-call report in a launch's output, after its progress lines.
 
-    name: str
-    status: Status
-    why: str
+    ``vox call`` prints one status line for each change while it follows the
+    call, then the report; the report begins at the last ``call ended`` or
+    ``call failed`` line. Without one the whole output stands in.
+    """
+    lines = launch_output.splitlines()
+    for index in range(len(lines) - 1, -1, -1):
+        if lines[index].startswith(("call ended", "call failed")):
+            return "\n".join(lines[index:]) + "\n"
+    return launch_output
 
 
-@final
-class Judge:
-    """Read the end-of-call report ``vox call`` prints and judge six expectations."""
+def load_trace(status: str) -> Trace | None:
+    """Return the trace named by the status text's ``trace:`` line, if readable.
 
-    __slots__ = (
-        "_agent",
-        "_ended",
-        "_output",
-        "_report",
-        "_search_key",
-        "_tools",
-        "_trace",
-    )
-    _report: str
-    _output: str
-    _search_key: bool
-    _agent: list[str]
-    _tools: list[str]
-    _ended: bool
-    _trace: list[dict[str, object]] | None  # None: no trace was read.
-
-    def __new__(
-        cls,
-        report: str,
-        output: str,
-        *,
-        search_key: bool,
-        trace: list[dict[str, object]] | None = None,
-    ) -> Self:
-        """Bind the report, the call's other output and whether search is set up."""
-        self = super().__new__(cls)
-        self._report, self._output, self._search_key = report, output, search_key
-        self._trace = trace
-        self._agent, self._tools, self._ended = self._parse(report)
-        return self
-
-    @staticmethod
-    def _parse(report: str) -> tuple[list[str], list[str], bool]:
-        """Return agent replies (continuation lines joined), tool lines, ended."""
-        agent: list[str] = []
-        tools: list[str] = []
-        ended = False
-        in_reply = False
-        for line in report.splitlines():
-            if line.startswith("agent: "):
-                agent.append(line[len("agent: ") :])
-                in_reply = True
-            elif line.startswith(("user: ", "tool: ", "trace: ", "call ")):
-                in_reply = False
-                if line.startswith("tool: "):
-                    tools.append(line)
-            elif line.startswith("ended by "):
-                in_reply, ended = False, True
-            elif line.strip() and in_reply:
-                agent[-1] += " " + line.strip()
-        return agent, tools, ended
-
-    def verdicts(self) -> list[Verdict]:
-        """Return the six expectations in order."""
-        return [
-            self._greeting(),
-            self._docs(),
-            self._plain_words(),
-            self._search(),
-            self._silence(),
-            self._clean_end(),
-        ]
-
-    def _greeting(self) -> Verdict:
-        first = self._agent[0] if self._agent else ""
-        if not first:
-            return Verdict("greeting", "FAIL", "the agent said nothing")
-        if _OLD_OPENER.search(first):
-            return Verdict("greeting", "FAIL", f"old workers opener: {first!r}")
-        if "vox" not in first.lower():
-            return Verdict("greeting", "FAIL", f"not the greeting: {first!r}")
-        return Verdict("greeting", "PASS", first)
-
-    def _docs(self) -> Verdict:
-        calls = [t for t in self._tools if t.startswith("tool: read_docs(")]
-        if not calls:
-            return Verdict("docs", "FAIL", "read_docs was never called")
-        if any(not c.endswith("-> ok") for c in calls):
-            return Verdict("docs", "FAIL", f"read_docs errored: {calls}")
-        if not self._replied_after("read_docs"):
-            return Verdict(
-                "docs", "FAIL", "no agent reply followed the read_docs result"
-            )
-        return Verdict(
-            "docs", "PASS", f"{len(calls)} read_docs call(s) ok, then a reply"
-        )
-
-    def _replied_after(self, tool: str) -> bool:
-        """Return whether an agent reply follows the tool's successful result."""
-        if self._trace is None:
-            return False
-        results = [
-            t for r in self._trace if (t := self._result_time(r, tool)) is not None
-        ]
-        if not results:
-            return False
-        first = min(results)
-        replies = [
-            float(r["ms"])
-            for r in self._trace
-            if r.get("type") == "agent_response"
-            and isinstance(r.get("ms"), int | float)
-        ]
-        return any(ms > first for ms in replies)
-
-    @staticmethod
-    def _result_time(row: dict[str, object], tool: str) -> float | None:
-        """Return the time of a successful result row for *tool*, else None."""
-        detail = row.get("detail")
-        ms = row.get("ms")
-        if (
-            row.get("type") != "agent_tool_response"
-            or not isinstance(detail, dict)
-            or detail.get("tool_name") != tool
-            or detail.get("is_error")
-            or not isinstance(ms, int | float)
-        ):
-            return None
-        return float(ms)
-
-    def _plain_words(self) -> Verdict:
-        marked = [t for t in self._agent if _MARKDOWN.search(t)]
-        if marked:
-            return Verdict("plain words", "FAIL", f"markdown spoken: {marked[0]!r}")
-        return Verdict("plain words", "PASS", "no markdown in any agent reply")
-
-    def _search(self) -> Verdict:
-        if not self._search_key:
-            return Verdict("search", "SKIP", "search not configured (no EXA_API_KEY)")
-        calls = [t for t in self._tools if t.startswith("tool: search_web(")]
-        if not calls:
-            return Verdict("search", "FAIL", "search_web was never called")
-        if any(not c.endswith("-> ok") for c in calls):
-            return Verdict("search", "FAIL", f"search_web errored: {calls}")
-        return Verdict("search", "PASS", f"{len(calls)} search_web call(s) ok")
-
-    def _silence(self) -> Verdict:
-        nags = [t for t in self._agent if _NAG.search(t)]
-        if nags:
-            return Verdict("silence", "FAIL", f"the agent nagged: {nags[0]!r}")
-        return Verdict("silence", "PASS", "no 'are you there' in the whole call")
-
-    def _clean_end(self) -> Verdict:
-        if not is_final(self._report):
-            return Verdict("clean end", "FAIL", "the call was still live when judged")
-        if "RuntimeWarning" in self._output or "Traceback" in self._output:
-            return Verdict("clean end", "FAIL", "warning or traceback on hang-up")
-        if not self._ended:
-            return Verdict("clean end", "FAIL", "the report names no end of the call")
-        return Verdict("clean end", "PASS", "ended without a warning")
+    Raises:
+        ValueError: If a row is not JSON, as a half-written last line is not.
+    """
+    if not (path := trace_path(status)):
+        return None
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    parsed = [json.loads(row) for row in text.splitlines() if row.strip()]
+    rows = [row for row in parsed if isinstance(row, dict)]
+    return Trace(rows, len(parsed) - len(rows))
 
 
 @final
 class CallRun:
     """Generate the caller's audio, place the call, and always stop it."""
 
-    __slots__ = ("_directory", "_placed")
+    __slots__ = ("_audio_s", "_cleanup", "_directory", "_launched", "_placed")
+    _audio_s: float  # How long the generated script plays, once it is built.
     _directory: Path
     _placed: bool  # True once this run started a call; only then may it stop one.
+    _cleanup: Cleanup | None  # None until the call has been placed and swept.
+    _launched: subprocess.CompletedProcess[str] | None  # None: it never returned.
 
     def __new__(cls, directory: Path) -> Self:
         """Work inside *directory*, which holds the generated audio and script."""
         self = super().__new__(cls)
         self._directory = directory
         self._placed = False
+        self._cleanup = None
+        self._launched = None
+        self._audio_s = 0.0
         return self
 
+    @property
+    def cleanup(self) -> Cleanup:
+        """Return what became of the workers the call started.
+
+        Raises:
+            ValueError: If no call has been placed and swept yet.
+        """
+        if self._cleanup is None:
+            raise ValueError("no call has been placed")
+        return self._cleanup
+
     def place(self, *, search: bool) -> tuple[str, str]:
-        """Return the final ``vox call status`` text and the call's own output."""
-        script = self._script(search=search)
-        self._placed = True
+        """Return the report of the call this run placed and the launch's output.
+
+        The call's own trace says which workers it started. A launch that
+        prints no trace line (killed by its timeout) is recovered from the
+        status, which counts only when its trace differs from the one before
+        the launch. The report is empty when no call can be attributed.
+
+        Raises:
+            ValueError: If the workers or the call status cannot be read before
+                anything is spent.
+        """
+        fleet = WorkerFleet.observe()
         try:
-            done = subprocess.run(
-                [
-                    "timeout",
-                    str(_CALL_TIMEOUT_S),
-                    "vox",
-                    "call",
-                    "--script",
-                    str(script),
-                ],
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=_CALL_TIMEOUT_S + 15,
-            )
-            self._stop()
-            status = self._settled_status()
+            before = trace_path(self.status())
+        except ValueError as exc:
+            raise ValueError(
+                f"could not read the call status before launching: {exc}"
+            ) from exc
+        launch: subprocess.CompletedProcess[str] | None = None
+        failure = ""
+        killed = False
+        try:
+            script = self._script(search=search)
+            launch = self._launch(script, search=search)
+        except (
+            subprocess.CalledProcessError,
+            subprocess.TimeoutExpired,
+            OSError,
+        ) as exc:
+            failure = f"{type(exc).__name__}: {str(exc)[:200]}"
+            killed = isinstance(exc, subprocess.TimeoutExpired)
         finally:
-            self._stop()
-        return status, done.stdout + done.stderr
+            self._launched = launch
+            mine, status, problems = self._attribute(launch, before, killed=killed)
+            if failure:
+                problems.insert(0, f"the call could not be run ({failure})")
+            self._cleanup = self._sweep(fleet, mine, problems)
+        output = "" if launch is None else launch.stdout + launch.stderr
+        return status, output
+
+    @property
+    def audio_s(self) -> float:
+        """Return how long the generated script plays, 0.0 before it is built."""
+        return self._audio_s
+
+    @property
+    def placed(self) -> bool:
+        """Return whether a launch was attempted, so a failure is past setup."""
+        return self._placed
+
+    @property
+    def launch_exit(self) -> int | None:  # None: the launch never returned.
+        """Return the exit status of ``vox call``, or None when it never returned."""
+        return None if self._launched is None else self._launched.returncode
+
+    def _launch(
+        self, script: Path, *, search: bool
+    ) -> subprocess.CompletedProcess[str]:
+        timeout = launch_timeout_s(search=search, audio_s=self._audio_s)
+        self._placed = True
+        return subprocess.run(
+            ["timeout", str(timeout), "vox", "call", "--script", str(script)],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout + 15,
+        )
+
+    def _attribute(
+        self,
+        launch: subprocess.CompletedProcess[str] | None,
+        before: str,
+        *,
+        killed: bool,
+    ) -> tuple[str, str, list[str]]:
+        """Return this run's call trace, its report and what could not be shown.
+
+        A launch that printed its report named its call and has ended, so there
+        is nothing to stop. A scripted call normally ends by ``timeout`` killing
+        the launch (exit 124): its call is then found from the status, accepted
+        only when its trace is new, and a live one is hung up.
+        """
+        if launch is not None and (mine := trace_path(launch.stdout)):
+            problems: list[str] = []
+            status = self._read_report(mine, report_of(launch.stdout), problems)
+            return mine, status, problems
+        if launch is not None and launch.returncode != TIMEOUT_EXIT:
+            err = launch.stderr.strip()[:200]
+            msg = f"vox call exited {launch.returncode} without a report ({err})"
+            return "", "", [msg]  # Not killed: no call is this run's to adopt.
+        if launch is None and not killed:
+            return "", "", ["the launch never ran, so no call is this run's"]
+        try:
+            found = self.status()
+        except ValueError as exc:
+            return "", "", [f"could not read the call status to find the call: {exc}"]
+        mine = trace_path(found)
+        if not mine or mine == before:
+            return "", "", ["the call timed out and could not be found from status"]
+        problems = []  # Recovery is the normal end of a scripted call.
+        if fault := self._stop(mine):
+            problems.append(fault)
+        return mine, self._read_report(mine, "", problems), problems
+
+    def _read_report(self, mine: str, fallback: str, problems: list[str]) -> str:
+        """Return the ended report of call ``mine``, noting in ``problems`` if not."""
+        try:
+            status = self._settled_status(mine, fallback)
+        except ValueError as exc:
+            problems.append(f"could not read the call status for the report: {exc}")
+            return fallback
+        if not status:
+            problems.append("another call replaced the status before this report")
+        elif is_live(status):
+            problems.append("the call is still live; run `vox call stop`")
+        elif not is_final(status):
+            problems.append("the call never reached an ended status")
+        return status
+
+    def _sweep(self, fleet: WorkerFleet, mine: str, problems: list[str]) -> Cleanup:
+        """Stop the workers the call's trace names, and name any others."""
+        ids: tuple[str, ...] = ()
+        if mine:
+            try:
+                loaded = load_trace(f"trace: {mine}")
+            except ValueError as exc:
+                problems.append(f"the call trace was unreadable: {exc}")
+                loaded = Trace([], 0)
+            if loaded is None:
+                problems.append(
+                    "the call trace could not be read, so its workers are unknown"
+                )
+                loaded = Trace([], 0)
+            if loaded.dropped:
+                problems.append(
+                    f"the call trace held {loaded.dropped} row(s) that are not objects"
+                )
+            rows = loaded.rows
+            details = [
+                cast("dict[str, object]", row["detail"])
+                for row in rows
+                if row.get("type") == "worker_started"
+                and isinstance(row.get("detail"), dict)
+            ]
+            ids = tuple(
+                cast("str", d["worker_id"])
+                for d in details
+                if isinstance(d.get("worker_id"), str)
+            )
+        found = fleet.sweep(ids)
+        return replace(found, problems=(*problems, *found.problems))
 
     def _script(self, *, search: bool) -> Path:
         rows = []
+        audio_bytes = 0
         for index, turn in enumerate(script_plan(search=search)):
             pcm = self._pcm(index, turn.text, turn.pause_s)
+            audio_bytes += pcm.stat().st_size
             rows.append(
                 json.dumps(
                     {
@@ -304,6 +285,7 @@ class CallRun:
                     }
                 )
             )
+        self._audio_s = audio_bytes / PCM_BYTES_PER_S
         script = self._directory / "script.jsonl"
         script.write_text("\n".join(rows) + "\n")
         return script
@@ -335,36 +317,84 @@ class CallRun:
         )
         return pcm
 
-    def _settled_status(self) -> str:
-        """Poll briefly until the call reports an ended state; return that text."""
+    def _settled_status(self, mine: str, fallback: str) -> str:
+        """Return the ended report of the call whose trace is ``mine``.
+
+        A status naming a different trace belongs to another call, and then
+        ``fallback`` (the launch's own report, or '') stands in.
+        """
         status = self.status()
         for _ in range(_SETTLE_POLLS):
-            if is_final(status):
-                break
+            theirs = trace_path(status)
+            if theirs and theirs != mine:
+                return fallback
+            if is_final(status) and theirs == mine:
+                return status
             time.sleep(_SETTLE_WAIT_S)
             status = self.status()
-        return status
+        return status if trace_path(status) == mine else fallback
 
     @staticmethod
     def status() -> str:
-        """Return the status text after the call, which is the full report."""
-        done = subprocess.run(
-            ["timeout", str(_STOP_TIMEOUT_S), "vox", "call", "status"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        """Return the status text after the call, which is the full report.
+
+        Raises:
+            ValueError: If ``vox call status`` failed or timed out, so that a
+                failed read is never mistaken for an idle daemon.
+        """
+        try:
+            done = subprocess.run(
+                ["timeout", str(_STOP_TIMEOUT_S), "vox", "call", "status"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=_STOP_TIMEOUT_S + 5,
+            )
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            raise ValueError(f"vox call status failed ({type(exc).__name__})") from exc
+        if done.returncode != 0:
+            detail = done.stderr.strip()[:200] or "no stderr"
+            raise ValueError(
+                f"vox call status failed (exit {done.returncode}: {detail})"
+            )
         return done.stdout
 
-    def _stop(self) -> None:
-        """Stop the call this run placed; never one it did not start."""
-        if not self._placed:
-            return
-        subprocess.run(
-            ["timeout", str(_STOP_TIMEOUT_S), "vox", "call", "stop"],
-            capture_output=True,
-            check=False,
-        )
+    def _stop(self, mine: str) -> str:
+        """Hang up the live call whose trace is ``mine``; return what went wrong.
+
+        ``vox call stop`` stops whatever call is live, so it runs only while the
+        live status still names this run's call. A stop that fails because the
+        call ended in the meantime is not a failure.
+        """
+        try:
+            if not self._is_mine_and_live(mine):
+                return ""
+            done = subprocess.run(
+                ["timeout", str(_STOP_TIMEOUT_S), "vox", "call", "stop"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if done.returncode == 0 or not self._is_mine_and_live(mine):
+                return ""
+        except ValueError as exc:
+            return (
+                "could not read the call status to hang up; "
+                f"run `vox call stop` ({exc})"
+            )
+        detail = done.stderr.strip()[:200] or "no stderr"
+        return f"vox call stop failed (exit {done.returncode}: {detail})"
+
+    def _is_mine_and_live(self, mine: str) -> bool:
+        """Return whether the live call is the one with trace ``mine``.
+
+        Raises:
+            ValueError: If the status cannot be read.
+        """
+        if not mine:
+            return False
+        status = self.status()
+        return trace_path(status) == mine and is_live(status)
 
 
 def _search_configured() -> bool:
@@ -388,21 +418,52 @@ def main() -> int:
     if missing:
         print(f"FAIL setup: missing {', '.join(missing)}")
         return 2
-    if is_live(CallRun.status()):
+    try:
+        live = is_live(CallRun.status())
+    except ValueError as exc:
+        print(f"FAIL setup: could not read the call status ({exc})")
+        return 3
+    if live:
         print("FAIL setup: a call is already live; refusing to run or stop it")
         return 3
     search = _search_configured()
     with tempfile.TemporaryDirectory(prefix="verify-call-") as directory:
-        report, output = CallRun(Path(directory)).place(search=search)
-    trace = load_trace(report)
-    verdicts = Judge(report, output, search_key=search, trace=trace).verdicts()
+        run = CallRun(Path(directory))
+        try:
+            report, output = run.place(search=search)
+        except ValueError as exc:
+            if not run.placed:
+                print(f"FAIL setup: {exc}")
+                return 4
+            print(f"FAIL run: {exc}")
+            return 1
+    trace_problem = ""
+    try:
+        loaded = load_trace(report)
+    except ValueError as exc:
+        loaded = None
+        trace_problem = f"trace unreadable ({exc})"
+    trace = None if loaded is None else loaded.rows
+    verdicts = Judge(
+        report,
+        output,
+        search_key=search,
+        trace=trace,
+        cleanup=run.cleanup,
+        launch_exit=run.launch_exit,
+    ).verdicts()
     for verdict in verdicts:
         print(f"{verdict.status} {verdict.name}: {verdict.why}")
     failed = [v.name for v in verdicts if v.status == "FAIL"]
+    if trace_problem:
+        print(f"FAIL run: {trace_problem}")
+        failed.append("trace")
     if failed:
         print(f"verify-call FAILED: {', '.join(failed)}")
         print("--- call report ---")
         print(report)
+        print("--- launch output ---")
+        print(output)
         return 1
     skipped = [v.name for v in verdicts if v.status == "SKIP"]
     print(

@@ -6,6 +6,9 @@ import asyncio
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
+from punt_vox.voxd.pcm_loss import DeviceLoss
+from punt_vox.voxd.pcm_output import OutputDeviceLostError
+
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
@@ -86,11 +89,14 @@ class FakeWorkers:
 class FakeSink:
     def __init__(self) -> None:
         self.fed: list[bytes] = []
+        self.starts: list[bool] = []  # Whether each chunk began an utterance.
         self.flushed = 0
         self.finished = False
+        self.note: str | None = None
 
-    def feed(self, pcm: bytes) -> None:
+    def feed(self, pcm: bytes, *, starts_utterance: bool = False) -> None:
         self.fed.append(pcm)
+        self.starts.append(starts_utterance)
 
     def flush(self) -> None:
         self.flushed += 1
@@ -109,6 +115,7 @@ class FakePlayback:
         self.sinks: list[FakeSink] = []
         self.released = 0
         self.mutex = asyncio.Lock()
+        self.play_out_s = 0.0  # How long the last reply takes to play out.
 
     @asynccontextmanager
     async def stream_pcm(self, *, locked: bool = False) -> AsyncGenerator[FakeSink]:
@@ -120,3 +127,26 @@ class FakePlayback:
             yield sink
         finally:
             self.released += 1
+
+
+class UnconfirmedPlayback(FakePlayback):
+    """A device that never confirms a finished stream played out: exit raises."""
+
+    @asynccontextmanager
+    async def stream_pcm(self, *, locked: bool = False) -> AsyncGenerator[FakeSink]:
+        async with super().stream_pcm(locked=locked) as sink:
+            yield sink
+        await asyncio.sleep(self.play_out_s)
+        msg = "output device stopped before the PCM stream played out"
+        raise OutputDeviceLostError(msg)
+
+
+class LatePlayback(FakePlayback):
+    """A device that confirmed after the bound: the reply played, a note is kept."""
+
+    @asynccontextmanager
+    async def stream_pcm(self, *, locked: bool = False) -> AsyncGenerator[FakeSink]:
+        async with super().stream_pcm(locked=locked) as sink:
+            yield sink
+        await asyncio.sleep(self.play_out_s)
+        sink.note = DeviceLoss.UNCONFIRMED.message

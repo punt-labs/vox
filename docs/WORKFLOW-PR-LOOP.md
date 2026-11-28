@@ -35,8 +35,8 @@ function pr_loop(unit):
     if local_review(full diff) is blocked: stop the unit until the
         operator rules                    # local_review: after close_out
 
-    # C. SHIP — the PR opens before the demo, so remote review runs while
-    #    the operator is away; the merge waits for the demo (merge_gate)
+    # C. SHIP — the PR opens before any demo, so remote review runs while
+    #    the operator is away; the merge waits for demo_ok (merge_gate)
     push; create the PR (description carries the verification playbook)
         # Qodo reviews once, on open (.pr_agent.toml)
     if copilot_trial(pr): request a Copilot review   # once, at open; none
@@ -44,12 +44,18 @@ function pr_loop(unit):
     schedule a background poll with /loop 3m  # never gh pr checks --watch,
                                               # never foreground sleep loops
 
-    # D. DEMO — confirmed by ear when audible(pr), the one human gate;
+    # D. EXERCISE BEFORE MERGE — a green automated tier that drives the
+    #    changed behavior through its real entry point is the proof
+    #    (coverage, rows_green); a demo runs only for a tier gap. The demo is
+    #    confirmed by ear when audible(pr), the one human gate;
     #    otherwise by the leader's recorded run. poll_tick is
     #    its only caller, so it runs at most once at a time, and it runs
     #    again after a non-exempt push or a failed demo
 
 function demo(pr):
+    # called only when gaps(pr) is not empty: some changed behavior has no
+    # automated tier exercising it. The demo covers every row of gaps(pr)
+    # and nothing else; the covered rows are proven by their tiers
     no push to the branch, and no other demo, while this one runs
     if audible(pr) and the operator is not available: return
                                                 # no comment; a later tick
@@ -82,7 +88,8 @@ function demo(pr):
         delivery, the ducking, the chime and its timing; the ear is asked
         only for those
     if the operator confirms: comment "demo confirmed by ear: H" with the
-        operator's words and the roundtrip result
+        operator's words for each audible gap, the command and output
+        for each silent gap, and the roundtrip result
                                     # demoed_head; only a PR that changes
                                     #   a non-exempt file reaches here
                                     #   (demo_ok is false)
@@ -204,12 +211,77 @@ function demo(pr):
 #   demo_exempt(f) = f is under docs/, tests/, or .github/, is a ratchet
 #                  file (.oo-*, .suppression-*), is one of the
 #                  files .pr_agent.toml, .gitignore, .cursor/BUGBOT.md,
-#                  or is a top-level *.md,
-#                  and is not under plugin/ — commands, skills, agents,
-#                  and hooks there are behavior even when Markdown, because
-#                  Claude Code executes them; src/, a dependency, or an
-#                  install change can change what the operator hears
-#   audible(pr)  = some non-exempt file the PR changes can change what is
+#                  or is a documentation file wherever it sits (*.md,
+#                  *.tex, *.bib, or a *.pdf built from one: README.md,
+#                  DESIGN.md, CHANGELOG.md, the PR/FAQs prfaq*.tex with
+#                  their .bib and .pdf, the guide copies this repo keeps
+#                  under .punt-labs/),
+#                  and is not under plugin/ or src/ — commands, skills,
+#                  agents, and hooks under plugin/ are behavior even when
+#                  Markdown, because Claude Code executes them, and a
+#                  Markdown file under src/ ships in the package (the
+#                  guide template `vox enable` writes into other repos);
+#                  src/, a dependency, or an install change can change
+#                  what the operator hears. A settings file is not
+#                  documentation whatever its extension: a tool's
+#                  <tool>.md or <tool>.local.md directly under .punt-labs/
+#                  or .punt-labs/<tool>/ is configuration, so it is never
+#                  exempt (.punt-labs/vox/vox.md holds vox's provider,
+#                  voice, notify and speak). Outside plugin/ and
+#                  src/, every documentation update is demo-exempt
+#                  (operator ruling, 2026-11-27): such a file is written
+#                  for people and agents. Three vox commands read one:
+#                  the guide row of `vox doctor` compares
+#                  .punt-labs/vox/CLAUDE.md with the packaged template
+#                  and reports drift, and `vox enable` and `vox disable`
+#                  read the root CLAUDE.md to add or remove the guide's
+#                  import line; none plays anything, and both files
+#                  stay exempt
+#   coverage(pr) = the leader's latest "tier coverage: H" comment, valid
+#                  when H is the head, or an ancestor of it and every file
+#                  changed since H is a demo_exempt documentation file
+#                  (*.md, *.tex, *.bib or a *.pdf built from one). tests/
+#                  and .github/ are demo_exempt but are not documentation:
+#                  a later change
+#                  to a test, a workflow or any non-exempt file ends its
+#                  validity, so removing or weakening a named test, or
+#                  dropping its tier from CI, forces a new comment. With no
+#                  valid comment, a PR that changes a non-exempt file has
+#                  no coverage. The comment has one row for every behavior
+#                  the PR changes in a non-exempt file. A covered row
+#                  names an automated tier and a test in it that exercises
+#                  the behavior through its real entry point: subprocess,
+#                  e2e, call_e2e, roundtrip (offline on every PR; the live
+#                  run for a provider change), playback, levels, agent,
+#                  live_call, or a default-tier test only when it drives
+#                  the real entry point. A test against mocks does not
+#                  count: it exercises the code, not the entry point. A
+#                  gap row names a behavior no tier exercises and marks it
+#                  audible or silent. What no tier judges is always a gap
+#                  when the PR changes it: which voice speaks, the
+#                  delivery, ducking, chime timing, and what the Lux
+#                  display shows
+#   rows_green(pr) = coverage(pr) is valid and the tier of every covered
+#                  row is green on the PR head: its CI check, or, for a
+#                  tier that does not run on a PR (the live roundtrip,
+#                  playback, levels, agent, live_call), the leader's run
+#                  at H of the valid coverage comment, with the command
+#                  and output pasted in that comment (every file changed
+#                  since H is documentation, so the run still describes the
+#                  head). A covered row on such a tier with no pasted run
+#                  makes the comment invalid, so the next tick runs the
+#                  tier and posts the comment again. A tier that is red or still running is a CI
+#                  state to wait for or fix; it never calls for a demo
+#   gaps(pr)     = the gap rows of the valid coverage(pr). The gate exists
+#                  to exercise the code before the merge; a green tier
+#                  that does so is the proof, and a demo is for a tier gap
+#                  (operator ruling, 2026-11-27)
+#   audible(pr)  = some row of gaps(pr) is marked audible. A gap is
+#                  audible when its behavior can change what is heard; a
+#                  gap that only reads or reports state (a status reading,
+#                  a doctor row, a refusal) is silent wherever its file
+#                  sits. Otherwise the file decides, and these can change
+#                  what is
 #                  heard (demo_exempt files are not counted): under
 #                  src/punt_vox/providers/, src/punt_vox/voxd/ (every file:
 #                  port_file.py publishes the port clients need to speak),
@@ -224,15 +296,22 @@ function demo(pr):
 #                  the daemon that plays, so they are audible. Any other non-exempt file
 #                  is audible: the list fails closed
 #   demoed_head  = the commit named in the leader's latest "demo confirmed"
-#                  comment, newer than any "demo failed:" comment. The form
-#                  is checked: "demo confirmed by ear: H" counts for any PR
-#                  when it records a passed roundtrip result; "demo
+#                  comment, newer than any "demo failed:" comment, when
+#                  that comment lists every row of gaps(pr) with its
+#                  result. The form is checked: "demo confirmed by ear: H"
+#                  counts for any PR when it records a passed roundtrip
+#                  result, the operator's words for each audible gap, and
+#                  the command and output for each silent gap; "demo
 #                  confirmed (not audible): H" with the command and
 #                  output pasted counts only when audible(pr) is false, so
-#                  the leader's own run can never confirm an audible PR
-#   demo_ok(pr)  = every file the PR changes is demo_exempt, or demoed_head
+#                  the leader's own run can never confirm an audible gap
+#   demo_ok(pr)  = every file the PR changes is demo_exempt; or
+#                  rows_green(pr) and gaps(pr) is empty; or rows_green(pr)
+#                  and demoed_head
 #                  exists, is the head or an ancestor of it, and every file
-#                  changed since it is demo_exempt
+#                  changed since it is demo_exempt. A demo never stands in
+#                  for a covered row: the tiers named must be green whether
+#                  or not there is a gap
 #   finding also = the leader's latest "demo failed:" comment, until a
 #                  later demo-confirmed comment whose form counts under
 #                  demoed_head
@@ -302,11 +381,24 @@ function poll_tick(pr):
             that delta review raised is answered(f):
         set reviewed_head to delta_head  # bounded rounds, but no unreviewed
                                          #   merge, bot-authored PRs included
-    if demo_ok(pr) is false and nothing was pushed this tick
+    if some changed file is not demo_exempt and coverage(pr) is not valid:
+        run any tier a covered row will name that does not run on a PR
+        comment "tier coverage: H": one row per changed behavior, with the
+            tier and test that exercise it through its real entry point
+            (and the pasted run, for a tier outside PR CI), or "gap",
+            marked audible or silent, with what is not exercised
+        # a gap a test could close is a finding like any other: the test
+        # is written, reviewed and pushed in this PR, the comment is posted
+        # again with the row covered, and no demo is run for it
+    if gaps(pr) is not empty and demo_ok(pr) is false
+            and rows_green(pr) and nothing was pushed this tick
             and no demo is running:
-        demo(pr)                           # first demo, a re-demo after a
-                                           #   non-exempt push, or after a fix
-                                           #   for a failed demo
+        demo(pr)                           # a tier gap only: first demo, a
+                                           #   re-demo after a non-exempt
+                                           #   push, or after a fix for a
+                                           #   failed demo. A red or
+                                           #   running tier is never
+                                           #   demoed around
     if not pending(pr) and no finding is unanswered:
         cadence = 15m                      # only the demo, CI, or a late
                                            #   thread can change state now
@@ -325,8 +417,10 @@ function merge_gate(state) -> bool:
        and zero unresolved review threads
        and round(pr) ≤ 2
        and no escalation is open
-       and demo_ok(pr)                     # demoed, and nothing non-exempt
-                                           #   landed after the demo
+       and demo_ok(pr)                     # every covered row's tier green,
+                                           #   every gap demoed, and
+                                           #   nothing non-exempt landed
+                                           #   after
     # A push restarts CI, not review. When this returns true: merge
     # EXPLICITLY. No --auto. No --admin. Do not ask, do not wait.
 
@@ -404,6 +498,8 @@ ExitPR ≙ [ Δ LoopState; pr : PR |
                                           --   to fix, BEFORE the PR opened and
                                           --   before every fix push
   ∧ demoOk(pr)                            -- demo_ok: a non-exempt PR was
+                                          --   exercised by green tiers
+                                          --   (rows_green), and any gap was
                                           --   confirmed on demoed_head, by
                                           --   ear when audible(pr), and
                                           --   nothing non-exempt landed after

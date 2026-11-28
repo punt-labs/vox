@@ -18,12 +18,21 @@ __all__ = [
     "OutputDeviceLostError",
     "OutputStream",
     "OutputStreamFactory",
+    "StreamCompleted",
     "sounddevice_output_stream",
 ]
 
 
 class OutputDeviceLostError(RuntimeError):
     """The output device stopped before the stream ended."""
+
+
+class StreamCompleted(BaseException):
+    """Raised by the callback after the block that ends the stream.
+
+    The device plays what it holds, then reports the stream finished through
+    ``finished_callback``: a completion signal that needs no blocking call.
+    """
 
 
 class OutputStream(Protocol):
@@ -53,7 +62,8 @@ class OutputStreamFactory(Protocol):
     """Open a mono int16 output stream that pulls audio through *callback*.
 
     *finished_callback* runs on the device thread once the stream stops,
-    whether voxd stopped it or the device went away.
+    whether voxd stopped it, the device went away, or *callback* raised
+    :class:`StreamCompleted` and the device played its last block.
     """
 
     def __call__(
@@ -81,7 +91,7 @@ def sounddevice_output_stream(
     ``call`` extra, and every ``voxd`` start imports this module.
     """
     try:
-        from sounddevice import RawOutputStream
+        from sounddevice import CallbackStop, RawOutputStream
     except (ImportError, OSError) as exc:
         msg = (
             "streaming playback needs the `call` extra and PortAudio: "
@@ -89,13 +99,21 @@ def sounddevice_output_stream(
         )
         raise RuntimeError(msg) from exc
 
+    def completing(outdata: Buffer, frames: int, time: object, status: object) -> None:
+        # CallbackStop is PortAudio's paComplete: play the buffers already
+        # queued, then finish and call finished_callback.
+        try:
+            callback(outdata, frames, time, status)
+        except StreamCompleted:
+            raise CallbackStop from None
+
     return RawOutputStream(
         samplerate=samplerate,
         blocksize=blocksize,
         channels=1,
         dtype="int16",
         latency="low",
-        callback=callback,
+        callback=completing,
         finished_callback=finished_callback,
     )
 

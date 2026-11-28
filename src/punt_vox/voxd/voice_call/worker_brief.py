@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Final, cast, final
+from typing import TYPE_CHECKING, Final, final
+
+from punt_vox.voxd.voice_call.worker_activity import WorkerActivity
 
 if TYPE_CHECKING:
     from punt_vox.voxd.workers.types import WorkerPayload
@@ -16,6 +18,8 @@ _REPORT_FIELDS: Final = (
     "open_failure",
     "pending_decision",
 )
+# A status says the open failure once, under its activity.
+_STATUS_FIELDS: Final = tuple(f for f in _REPORT_FIELDS if f != "open_failure")
 _CLIP: Final = 400
 
 
@@ -27,34 +31,43 @@ class WorkerBrief:
 
     @staticmethod
     def summary(worker: WorkerPayload) -> dict[str, object]:
-        """Return the identity, task and state, for lists."""
+        """Return the identity, task, spoken state and lifecycle, for lists.
+
+        ``state`` is the spoken word (working, blocked, idle, finished);
+        ``lifecycle`` is the registry's launch phase.
+        """
         return {
             "worker_id": worker["id"],
             "task": WorkerBrief._clip(worker["task"]),
             "project": worker["project"],
-            "state": worker["state"],
-            "decision_choices": ["approve", "deny"]
-            if isinstance(
-                pending := worker["last_report"].get("pending_decision"), dict
-            )
-            and cast("dict[str, object]", pending).get("notification_type")
-            == "permission_prompt"
-            else [],
+            "state": WorkerActivity(worker).state,
+            "lifecycle": worker["state"],
+            "decision_choices": WorkerActivity(worker).decision_choices,
         }
 
     @staticmethod
-    def detail(worker: WorkerPayload) -> dict[str, object]:
+    def snapshot(
+        worker: WorkerPayload, fields: tuple[str, ...] = _REPORT_FIELDS
+    ) -> dict[str, object]:
         """Return the summary plus the worker's latest curated progress."""
         report = worker["last_report"]
         progress = {
             field: WorkerBrief._clip(value) if isinstance(value, str) else value
-            for field in _REPORT_FIELDS
+            for field in fields
             if (value := report.get(field)) is not None
         }
         return {
             **WorkerBrief.summary(worker),
             "branch": worker["branch"],
             "progress": progress,
+        }
+
+    @staticmethod
+    def detail(worker: WorkerPayload, now: float) -> dict[str, object]:
+        """Return the snapshot plus what the worker is doing as of ``now``."""
+        return {
+            **WorkerBrief.snapshot(worker, _STATUS_FIELDS),
+            "activity": WorkerActivity(worker).detail(now),
         }
 
     @staticmethod

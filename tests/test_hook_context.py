@@ -53,6 +53,18 @@ def test_worker_sequence_excludes_unadmitted_context_and_is_monotonic() -> None:
     assert store.worker_sequence("session-a") == 11
 
 
+def test_the_store_stamps_each_worker_event_with_its_own_clock() -> None:
+    store = HookContextStore(clock=lambda: 42.5)
+    store.ingest(_event("SessionStart", 1), worker_input=True)
+    assert store.snapshot("session-a")["last_event_at"] == 42.5
+
+
+def test_the_store_leaves_context_events_off_the_worker_clock() -> None:
+    store = HookContextStore(clock=lambda: 42.5)
+    store.ingest(_event("SessionStart", 1))
+    assert store.snapshot("session-a")["last_event_at"] == 0.0
+
+
 def test_counter_serializes_concurrent_independent_opens(tmp_path: Path) -> None:
     """Every sender gets a unique sequence in its own session."""
     counter = HookSequence(tmp_path, "session/a")

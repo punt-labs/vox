@@ -8,6 +8,7 @@ from typing import Literal, NotRequired, Self, TypedDict, overload
 # table, and declaring them here is what makes that use a typed one.
 __all__ = [
     "CallbackFlags",
+    "CallbackStop",
     "DeviceInfo",
     "PortAudioError",
     "RawInputCallback",
@@ -19,6 +20,9 @@ __all__ = [
     "query_devices",
     "sleep",
 ]
+
+class CallbackStop(Exception):
+    """Raised in a callback: finish after the buffers it holds have played."""
 
 class PortAudioError(Exception):
     """Raised by sounddevice when PortAudio reports an error."""
