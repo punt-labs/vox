@@ -426,7 +426,7 @@ New operations: `StartBriefed` and `StartPlain` (H1), `ReceiveNoteB` (H2, H6),
 | H6 Notes survive the cut | sealing keeps every note made while live, and every note still pending, whatever ended the call |
 | H7 Durable once | a re-asked note replays; no second note |
 | H8 A sealed handoff stays | only the next `Start` changes it |
-| H9 Acting notes need a yes | on a tainted call a decision or instruction is recorded only after the person's spoken yes; a briefed call is tainted for its whole length |
+| H9 Acting notes need a yes | on a tainted call an answer, decision or instruction is recorded only after the person's spoken yes; a briefed call is tainted for its whole length |
 
 **Complete means the agent hung up.** If the person stops the call with
 Ctrl-C after answering everything, the handoff is `partial`. That is
@@ -563,8 +563,8 @@ second `Judge` set so the existing checks are untouched:
 
 1. *Complete.* A brief with one question and two options, and a made-up topic
    that does not appear in the role text ("the harbor ferry timetable").
-   The scripted caller answers "the second one" and says goodbye. The judge
-   requires: the agent's opener or first reply names the topic (proof that the
+   The scripted caller answers "the second one", says "yes" to the agent's
+   read-back of the answer, and says goodbye. The judge requires: the agent's opener or first reply names the topic (proof that the
    brief reached the agent); a `note_handoff` call; `handoff: complete`; the
    answer line with `choice` B; no `start_worker` call; `ended by agent`.
 2. *Partial.* The same brief, the scripted caller answers nothing and the
@@ -618,7 +618,7 @@ H12 are not state-machine properties and are named here so each has a test.
 | H6, daemon crash | call_e2e | `test_a_daemon_killed_mid_call_leaves_the_notes_in_the_handoff_file` |
 | H7 durable once | unit | `test_a_reasked_note_replays_and_records_once` in test_boss_tools.py |
 | H8 sealed stays | unit | `test_a_sealed_handoff_does_not_change_until_the_next_start` |
-| H9 acting notes need a yes | unit | in test_boss_tools_gate.py: `test_a_briefed_call_is_tainted_from_its_start`, `test_start_steer_and_stop_worker_wait_for_a_yes_on_a_briefed_call`, `test_a_decision_or_instruction_note_waits_for_a_yes_and_is_read_back`, `test_an_answer_note_is_not_held`, `test_a_note_on_an_unbriefed_call_is_refused` |
+| H9 acting notes need a yes | unit | in test_boss_tools_gate.py: `test_a_briefed_call_is_tainted_from_its_start`, `test_start_steer_and_stop_worker_wait_for_a_yes_on_a_briefed_call`, `test_an_answer_decision_or_instruction_note_waits_for_a_yes_and_is_read_back`, `test_an_open_note_is_not_held`, `test_a_note_on_an_unbriefed_call_is_refused` |
 | H10 the raw brief and rendered prompt are not persisted | unit, call_e2e | `test_a_brief_only_marker_is_not_in_the_trace_the_log_or_the_handoff_file`: the e2e brief carries a unique marker string in `background` that the fake agent never speaks, and the run greps the trace file, the daemon log and the handoff file for it (absent) and the fake agent's received initiation payload (present). A second test asserts the spoken topic and question text do appear in the transcript, because spoken content is in the status reply by design |
 | H10 privacy screen | unit | `test_a_brief_with_a_token_shaped_string_is_refused_without_echoing_it`, `test_an_oversized_brief_is_refused_not_truncated` |
 | H11 delivery | call_e2e | `test_the_report_ends_with_the_handoff_block`, `test_a_call_with_no_brief_prints_no_handoff_block` |
@@ -724,7 +724,7 @@ Recommendation first in each. No answer in two minutes means proceed with it.
    calls.
 4. **Taint every briefed call and hold acting notes for a yes.**
    Recommendation: yes (D3, Security). It costs one spoken "yes" when the
-   person asks for a worker, and one per decision or instruction note.
+   person asks for a worker, and one per answer, decision or instruction note.
    Alternative: leave the call untainted and rely on the prompt, which a
    poisoned brief can defeat.
 
