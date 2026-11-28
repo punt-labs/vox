@@ -62,6 +62,7 @@ class VoiceAgentCall:
         "_conversation_id",
         "_ended_by",
         "_error",
+        "_notes",
         "_opener",
         "_progress",
         "_speaker",
@@ -85,6 +86,7 @@ class VoiceAgentCall:
     _connected: asyncio.Event
     _transcript: CallTranscript
     _tool_calls: list[dict[str, object]]  # Every one the call made, for the report.
+    _notes: list[str]  # Device losses that came after the call had failed.
     _tools_answered: int  # Every one, for the end line; the history is capped.
 
     def __new__(
@@ -108,6 +110,7 @@ class VoiceAgentCall:
         self._connected = asyncio.Event()
         self._transcript = CallTranscript()
         self._tool_calls, self._tools_answered = [], 0
+        self._notes = []
         return self
 
     async def run(
@@ -183,12 +186,21 @@ class VoiceAgentCall:
     async def _play_out(self) -> None:
         """Let the last reply finish, then settle the call: ended, or failed."""
         # An error from finish() leaves the call non-final: only the launcher
-        # settles it, so no client sees "ended" before "failed".
-        unplayed = await self._speaker.finish()
-        if unplayed is not None:
+        # settles it, so no client sees "ended" before "failed". A stop is not
+        # an error: nobody settles a cancelled task, so it ends the call here.
+        try:
+            unplayed = await self._speaker.finish()
+        except asyncio.CancelledError:
+            if self._state in {"connecting", "live"}:
+                self._state = "ended"
+            raise
+        if unplayed is None:
+            if self._state in {"connecting", "live"}:
+                self._state = "ended"
+        elif self._state == "failed":
+            self._notes.append(unplayed)  # the call's own failure stays the error
+        else:
             self.mark_failed(unplayed)
-        elif self._state in {"connecting", "live"}:
-            self._state = "ended"
 
     async def _converse(
         self,
@@ -236,7 +248,7 @@ class VoiceAgentCall:
             "state": self._state,
             "conversation_id": self._conversation_id,
             "error": self._error,
-            "notes": list(self._speaker.notes),
+            "notes": [*self._speaker.notes, *self._notes],
             "ended_by": None if self._ended_by is None else self._ended_by.value,
             "replayed_tool_calls": self._tools.replayed,
             "transcript": self._transcript.turns(),
