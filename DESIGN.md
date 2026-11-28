@@ -4137,9 +4137,10 @@ call ends with a raw transcript.
 
 ### Decisions
 
-1. **The session writes a small JSON brief** and pipes it in with
-   `vox call --brief -`. The CLI sends content, never a path, because voxd can
-   be on another machine. voxd validates the brief and refuses a bad one before
+1. **The session writes a small JSON brief** to a file with its file tool
+   (never a shell heredoc, which text in the brief could close early) and names
+   it with `vox call --brief <file>`. The CLI sends the content, never the
+   path, because voxd can be on another machine. voxd validates the brief and refuses a bad one before
    dialing. Caps (3,500 bytes rendered, at most six questions) make "distilled,
    not a raw transcript" a property of the format. The brief rides the existing
    per-call prompt override, outside the 10,000-byte worker budget.
@@ -4165,7 +4166,8 @@ call ends with a raw transcript.
 7. **Every briefed call is tainted from its start.** Worker tools wait for a
    spoken yes, and `decision` and `instruction` notes get a read-back and a
    yes. The brief is written by a model session that may have read untrusted
-   text, so prompt wording alone is not a gate.
+   text, so prompt wording alone is not a gate. `answer` notes are held too: a
+   note the person did not say must never be recorded.
 
 ### Operator rulings requested
 
@@ -4174,7 +4176,7 @@ call ends with a raw transcript.
 | Brief sent without a per-call "send this?" prompt (`--no-brief`, `/call stop` are the brakes) | yes |
 | Ctrl-C after every question was answered | `partial` |
 | Briefed calls start workers only when asked | yes |
-| Taint every briefed call (a spoken yes per decision or instruction note) | yes |
+| Taint every briefed call (a spoken yes per answer, decision or instruction note) | yes |
 
 ### Consequences for the implementation mission
 
@@ -4185,11 +4187,10 @@ call ends with a raw transcript.
 - `seal_handoff()` must not raise inside a `finally`: it logs and seals partial.
 - A re-asked `note_handoff` takes the replay path and never re-enters `pending`;
   a test pins it.
-- Without `--call-id`, `vox call handoff` answers only from the daemon's
-  in-memory last call and prints its id; the session should pass the id from its
-  own `call:` line.
+- `vox call handoff` requires `--call-id`; there is no current-call or
+  newest-file fallback, so one session never receives another's answers.
 - Unverified and recorded in the design: ElevenLabs conversation retention,
-  latency at about 15,000 bytes of prompt, the heredoc grant under
+  latency at about 15,000 bytes of prompt, the file-based command under
   `Bash(vox call:*)`, and the background exit waking the session.
 
 ### Rejected alternatives

@@ -785,10 +785,11 @@ recorded, it is still in \texttt{pending} when the handoff seals.
 
 \texttt{answers?} is the questions this note resolves: one for an answer
 or a deferral, none for a decision, an instruction or an open point.
-\texttt{acting?} marks a decision or an instruction; \texttt{confirmed?} is
-the person's spoken yes to the daemon's read-back of it (H9). An answer to
-an asked question is not acting: the daemon checks it against the question
-and its offered options.
+\texttt{acting?} marks an answer, a decision or an instruction, that is,
+every note the session will act on; \texttt{confirmed?} is the person's
+spoken yes to the daemon's read-back of it (H9). Only an open point is not
+acting. The daemon also checks an answer against the question and its offered
+options.
 
 \begin{schema}{SealHandoff}
   \Delta HandoffRecord \\

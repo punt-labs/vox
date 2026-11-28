@@ -19,7 +19,7 @@ multiple-choice question the text mode asks.
 
 ```text
 session                         voxd (owns the call)                ElevenLabs agent
-   |  vox call --headset --brief -  <brief JSON on stdin>                  |
+   |  vox call --headset --brief <file>   (brief JSON in a file)           |
    |------------------------------> validate, render into the prompt ----->|  agent opens knowing the notes
    |                                collect note_handoff tool calls  <-----|  person talks; agent notes answers
    |                                seal handoff: complete | partial        |
@@ -63,10 +63,16 @@ Each decision names the alternatives considered and why they lost.
 ### D1. The briefing path
 
 **Decision.** The session writes the brief. It is a small JSON document the
-session pipes to `vox call` on standard input:
+session saves to a file with its file-writing tool (never through the shell,
+so no text in the brief is ever parsed as a command), then names in the call:
 
 ```bash
-vox call --headset --brief - <<'EOF'
+vox call --headset --brief /path/to/brief.json
+```
+
+with the file holding:
+
+```json
 {"topic": "which database the importer should use",
  "background": "Two short paragraphs, distilled: what we are building, what we tried, why the choice matters.",
  "questions": [
@@ -74,10 +80,16 @@ vox call --headset --brief - <<'EOF'
     "options": [{"id": "A", "text": "Postgres"}, {"id": "B", "text": "SQLite"}]},
    {"id": "retry", "ask": "How many times should a failed import retry?"}
  ]}
-EOF
 ```
 
-- `--brief FILE|-` is a new flag. The CLI reads the text and sends the parsed
+The session removes the file after the command returns. A shell heredoc is
+not used: the brief is written by a model that may have read untrusted web or
+repository text, and a line in that text that equals the heredoc's delimiter
+would end the heredoc early and run what follows as a shell command before
+voxd sees the brief. A file written by the file tool has no such parse.
+
+- `--brief FILE|-` is a new flag (`-` reads standard input, for pipelines; the
+  plugin command uses a file). The CLI reads the text and sends the parsed
   object in `call_start` as `brief`. It sends content, never a path, because
   voxd can be on another machine (the daemon is the audio host). It never
   accepts the brief as a command-line argument, which any local user can read
@@ -260,14 +272,18 @@ gate, applied as follows.
   voxd's own read-back, for the whole call. The cost is one "yes" when the
   person asks for a worker on a briefed call, which D2 already makes rare.
   The existing exemption for a bare denial of a live permission prompt stays.
-- *`note_handoff` is in the confirmed set only for what acts.* A note of kind
-  `decision` or `instruction` is held for the person's spoken yes, with voxd's
-  read-back of the exact text it will record ("Record this instruction for the
-  session: ... Say yes."), because those are what the session will carry out.
-  A note of kind `answer` or `open` is not held: an answer is checked by voxd
-  against the question and the options the brief offered, and the session
-  treats it as the person's answer, not as a command. The person hearing the
-  read-back is also a check on mis-heard speech.
+- *`note_handoff` is in the confirmed set for every note that the session
+  will act on.* A note of kind `answer`, `decision` or `instruction` is held
+  for the person's spoken yes, with voxd's read-back of the exact text it will
+  record ("Record this answer for the session: Postgres, for the importer.
+  Say yes."). The session carries these out, so a note the person did not say
+  must never be recorded: a poisoned brief could otherwise prompt the agent to
+  submit an offered option the person never chose. voxd also checks an answer
+  against the question and options the brief offered. Only a note of kind
+  `open` (an unresolved point the session should ask about in text) is not
+  held. The read-back is also a check on mis-heard speech. The cost is one
+  "yes" per recorded answer, decision or instruction; in a voice call it is
+  the natural confirmation ("so, Postgres, yes?").
 - *Every note goes through the same path.* `RequestGuard.for_tool`,
   `ReadBack.of` and `ToolFields.validate` assume a worker request today (they
   read `worker_id`, `task`, `words`); each gains a `note_handoff` case. The
@@ -277,8 +293,8 @@ gate, applied as follows.
   `confirmed?`; a briefed call is always tainted) and tested at the unit tier.
 
 Alternative: leave the brief untainted and rely on the prompt. Lost, for the
-reason above. Alternative: hold every note. Lost: it adds a "yes" to every
-answer and doubles the call. Alternative: taint at start but gate no notes:
+reason above. Alternative: hold every note including `open`. Lost: an open point is a
+question for the session, not something it acts on. Alternative: taint at start but gate no notes:
 lost, because an injected instruction then reaches the session with no human
 check.
 
@@ -350,15 +366,14 @@ agent closed the call)` and lists a never-discussed question as
   said on a call relayed by a voice agent, never as commands from the web or
   the repository, so a destructive instruction outside the topic of the brief
   is confirmed in text first.
-- One new verb, `vox call handoff [--call-id ID] [--json]`, reads a handoff. It
+- One new verb, `vox call handoff --call-id ID [--json]`, reads a handoff. It
   exists for the case the exit path cannot cover: the session was closed or
   compacted during the call, or the CLI lost its status. `vox call` prints
-  `call: <id>` first, so the session knows its own call's id. Without
-  `--call-id` the verb answers from the daemon's current or last call in
-  memory and prints that call's id and start time. With `--call-id` it reads
-  that call, from memory or from `call-<id>.handoff.json`. There is no
-  "newest file" fallback: after a daemon restart the verb refuses without an
-  id, so a session can never receive another session's handoff by accident. A
+  `call: <id>` first, so the session knows its own call's id and passes it.
+  The id is required: the verb reads that call, from memory or from
+  `call-<id>.handoff.json`. There is no "current call" and no "newest file"
+  fallback, so a session can never receive another session's handoff by
+  accident; a session that lost its id gets a refusal naming the flag. A
   file left `collecting` with no running call is shown as `partial (voxd
   stopped before the call ended)`. It adds one wire route, `call_handoff`.
 - Handoff files are kept 14 days. The launcher prunes older
@@ -576,7 +591,7 @@ says goodbye; a fake agent cannot.
 | C7, C8, C9 | The return recap, the live-update cut and agent teardown do not read or change the handoff. | Preserved. |
 | `CallControl._TEARDOWN_S` | It prices teardown for "the eight catalog tools" (2 x 9 x 2 x 10 s plus a minute). A ninth tool makes teardown delete one more resource per registration. | Found from callers; the implementation changes the arithmetic to count the catalog (`len(BossTools.CATALOG)`), not a literal. |
 | Registered-agent fingerprint | A new tool changes the catalog, so the next call after upgrading provisions a fresh agent once, through the replacement path that exists. | No migration code. |
-| `/call` command allowed tools (`Bash(vox call:*)`, asserted in `tests/test_call_command.py`) | The session runs `vox call ... --brief - <<'EOF'`, still one `vox call` command. | No change to the tool grant. The live tier checks that a heredoc does not raise a permission prompt (open item). |
+| `/call` command allowed tools (`Bash(vox call:*)`, asserted in `tests/test_call_command.py`) | The session writes the brief with its file tool, then runs `vox call ... --brief <file>`, still one `vox call` command. | No change to the tool grant. The live tier checks that the file-based command raises no permission prompt (open item). |
 | No migration, compat or shim code | None is introduced: no legacy flag, no format version, no fallback reader. | Complies. |
 
 ## Test plan
@@ -607,7 +622,7 @@ H12 are not state-machine properties and are named here so each has a test.
 | H10 the raw brief and rendered prompt are not persisted | unit, call_e2e | `test_a_brief_only_marker_is_not_in_the_trace_the_log_or_the_handoff_file`: the e2e brief carries a unique marker string in `background` that the fake agent never speaks, and the run greps the trace file, the daemon log and the handoff file for it (absent) and the fake agent's received initiation payload (present). A second test asserts the spoken topic and question text do appear in the transcript, because spoken content is in the status reply by design |
 | H10 privacy screen | unit | `test_a_brief_with_a_token_shaped_string_is_refused_without_echoing_it`, `test_an_oversized_brief_is_refused_not_truncated` |
 | H11 delivery | call_e2e | `test_the_report_ends_with_the_handoff_block`, `test_a_call_with_no_brief_prints_no_handoff_block` |
-| H11 delivery, wake-up and reading | live_call | `verify-call` runs `vox call` as the plugin does and judges the last block. The plugin's `/call` is also run once by hand in a session to confirm the exit wakes the session and the heredoc raises no permission prompt: a gap no tier covers, silent, closed by the leader's recorded run |
+| H11 delivery, wake-up and reading | live_call | `verify-call` runs `vox call` as the plugin does and judges the last block. The plugin's `/call` is also run once by hand in a session to confirm the exit wakes the session and the file-based command raises no permission prompt: a gap no tier covers, silent, closed by the leader's recorded run |
 | H12 a `collecting` file with no running call reads as partial | unit | `test_a_collecting_file_with_no_running_call_reads_as_partial_voxd_stopped`; `test_handoff_without_an_id_after_a_restart_refuses_and_never_reads_the_newest_file`; `test_handoff_files_older_than_14_days_are_pruned_at_call_start` |
 | Prompt budget | unit | `test_the_brief_is_never_trimmed_and_workers_are_trimmed_against_the_base_budget`, `test_a_prompt_over_the_total_cap_is_refused` |
 | Clarify, not delegate | unit | `test_a_briefed_prompt_tells_the_agent_not_to_start_workers_unasked` (prompt text) |
@@ -724,7 +739,7 @@ These are claims about the outside world that I did not run:
   and instruction-following. DES-070's spike tested larger seeds under a
   harness that has since been fixed; the live scenario confirms it with a real
   brief.
-- That a heredoc on `vox call ... --brief -` passes the `Bash(vox call:*)`
+- That `vox call ... --brief <file>` passes the `Bash(vox call:*)`
   grant without a permission prompt in a real session, and that the background
   command's exit wakes the session with the handoff in view.
 - The platform's dynamic-variable and post-call-analysis behavior, which
