@@ -121,11 +121,20 @@ def test_local_enable_and_toggles_leave_git_status_empty(
 
 
 @pytest.mark.subprocess
-def test_local_enable_refuses_when_gitignore_baseline_missing(tmp_path: Path) -> None:
+def test_local_enable_auto_excludes_when_gitignore_baseline_missing(
+    tmp_path: Path,
+) -> None:
+    """Bare local enable works in any git repo via .git/info/exclude with clean git."""
     _git(tmp_path, "init", "--quiet", "--template=")
-    with pytest.raises(ValueError, match="not gitignored"):
-        RepoEnablement.for_repo(tmp_path, scope="local").enable()
-    assert not (tmp_path / ".punt-labs" / "local" / "vox" / "enabled").exists()
+    state = RepoEnablement.for_repo(tmp_path, scope="local").enable()
+    assert state.on is True
+    assert state.status == "enabled_local"
+    assert (tmp_path / ".punt-labs" / "local" / "vox" / "enabled").exists()
+    assert not (tmp_path / ".gitignore").exists()
+    assert _porcelain(tmp_path) == ""
+    exclude = (tmp_path / ".git" / "info" / "exclude").read_text(encoding="utf-8")
+    assert ".punt-labs/local/" in exclude
+    assert "CLAUDE.local.md" in exclude
 
 
 @pytest.mark.subprocess

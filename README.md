@@ -123,7 +123,7 @@ Vox enabled. You'll hear when tasks finish or need approval.
 Pick a voice with /vox:voice.
 ```
 
-`/vox enable` defaults to personal scope (`--scope local`, gitignored `CLAUDE.local.md` and `.claude/settings.local.json`), which requires the repo's `.gitignore` (or `.git/info/exclude`) to ignore those personal files first. Pass `/vox enable project` (or `vox enable --scope project`) to add the `.gitignore` baseline and enable vox for the whole repository in `CLAUDE.md` and `.claude/settings.json`; see [Permissions](#permissions).
+`/vox enable` defaults to personal scope (`--scope local`, gitignored `CLAUDE.local.md` and `.claude/settings.local.json`, automatically adding local ignore rules to `.git/info/exclude` if the repo does not ignore them yet). Pass `/vox enable project` (or `vox enable --scope project`) to enable vox for the whole repository in `CLAUDE.md` and `.claude/settings.json`; see [Permissions](#permissions).
 
 ### Get a Recap
 

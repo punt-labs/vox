@@ -40,6 +40,13 @@ type EnablementStatus = Literal[
 
 _SHARED_DIR = Path(".punt-labs") / "vox"
 _LOCAL_DIR = Path(".punt-labs") / "local" / "vox"
+_LOCAL_EXCLUDE_RULES = (
+    ".punt-labs/**/*.local.*",
+    ".punt-labs/local/",
+    "CLAUDE.local.md",
+    ".claude/settings.local.json",
+    ".*.punt-import.lock",
+)
 
 
 def find_repo_root(start: Path | None = None) -> Path | None:
@@ -236,7 +243,19 @@ class PersonalTargetGuard:
         return git
 
     def _check_git_ignored(self, rel: Path, original: Path) -> None:
-        """Raise ``ValueError`` if *rel* is not ignored by git."""
+        """Ensure *rel* is ignored by git, adding local exclude rules if needed."""
+        if self._is_rel_ignored(rel):
+            return
+        self._ensure_local_exclude()
+        if not self._is_rel_ignored(rel):
+            msg = (
+                f"refusing personal-scope operation on {original}: "
+                f"{rel} is not gitignored"
+            )
+            raise ValueError(msg)
+
+    def _is_rel_ignored(self, rel: Path) -> bool:
+        """Return whether repo-relative *rel* is ignored by git."""
         result = subprocess.run(
             [
                 self._git_bin(),
@@ -251,12 +270,47 @@ class PersonalTargetGuard:
             text=True,
             check=False,
         )
-        if result.returncode != 0:
-            msg = (
-                f"refusing personal-scope operation on {original}: "
-                f"{rel} is not gitignored (add the gitignore baseline first)"
-            )
-            raise ValueError(msg)
+        return result.returncode == 0
+
+    def _ensure_local_exclude(self) -> None:
+        """Append missing personal-state rules to ``<git-dir>/info/exclude``."""
+        result = subprocess.run(
+            [
+                self._git_bin(),
+                "-C",
+                str(self._repo_root),
+                "rev-parse",
+                "--git-path",
+                "info/exclude",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0 or not result.stdout.strip():
+            return
+        raw = Path(result.stdout.strip())
+        exclude = raw if raw.is_absolute() else (self._repo_root / raw)
+        self._append_exclude_rules(exclude)
+
+    @staticmethod
+    def _append_exclude_rules(exclude: Path) -> None:
+        """Append missing ``_LOCAL_EXCLUDE_RULES`` lines to *exclude*."""
+        if exclude.is_symlink():
+            return
+        exclude.parent.mkdir(parents=True, exist_ok=True)
+        existing = exclude.read_text(encoding="utf-8") if exclude.exists() else ""
+        listed = {
+            line.removesuffix("\r").rstrip(" ").removeprefix("/")
+            for line in existing.splitlines()
+        }
+        missing = [rule for rule in _LOCAL_EXCLUDE_RULES if rule not in listed]
+        if not missing:
+            return
+        prefix = (
+            existing if (not existing or existing.endswith("\n")) else f"{existing}\n"
+        )
+        exclude.write_text(f"{prefix}{'\n'.join(missing)}\n", encoding="utf-8")
 
     def _check_git_untracked(self, rel: Path, original: Path) -> None:
         """Raise ``ValueError`` if *rel* is tracked in the git index."""
