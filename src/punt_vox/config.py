@@ -252,7 +252,13 @@ class ConfigStore:
     def _is_repo_enabled(self) -> bool:
         """Return whether this config dir belongs to an enabled repository."""
         if self._repo_name is not None:
-            return EnablementState.resolve(self._dir.parent.parent).on
+            owner = self._dir.parent.parent
+            if EnablementState.resolve(owner).on:
+                return True
+            if Path.cwd().resolve().is_relative_to(owner.resolve()):
+                state = EnablementState.resolve_cwd()
+                return state is not None and state.on
+            return False
         if self._dir == DEFAULT_CONFIG_DIR:
             state = EnablementState.resolve_cwd()
             return state is not None and state.on

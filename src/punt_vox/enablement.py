@@ -313,17 +313,21 @@ class RepoEnablement:
 
     def purge(self) -> EffectiveEnablement:
         """Disable and delete the scope's vox directory subtree."""
-        self.disable()
         target_dir = self._marker.path.parent
         repo_resolved = self._repo_root.resolve()
-        if target_dir.is_symlink() or (
-            target_dir.exists()
-            and not target_dir.resolve().is_relative_to(repo_resolved)
+        if (
+            target_dir.is_symlink()
+            or target_dir.parent.is_symlink()
+            or (
+                target_dir.exists()
+                and not target_dir.resolve().is_relative_to(repo_resolved)
+            )
         ):
             msg = f"refusing to purge symlinked or external directory {target_dir}"
             raise ValueError(msg)
         if self._guard is not None and target_dir.exists():
             self._guard.verify_dir_untracked(target_dir)
+        self.disable()
         if target_dir.exists():
             self._remove_subtree(target_dir)
         return EnablementState.resolve(self._repo_root)

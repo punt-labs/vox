@@ -412,11 +412,13 @@ def test_purge_refuses_symlinked_punt_labs_ancestor(tmp_path: Path) -> None:
     outside = tmp_path / "outside"
     (outside / "vox").mkdir(parents=True)
     (outside / "vox" / "sentinel.txt").write_text("keep\n", encoding="utf-8")
+    (outside / "vox" / "enabled").write_text("on\n", encoding="utf-8")
     (repo / ".punt-labs").symlink_to(outside)
 
     with pytest.raises(ValueError, match="symlinked or external"):
         RepoEnablement.for_repo(repo, scope="project").purge()
     assert (outside / "vox" / "sentinel.txt").exists()
+    assert (outside / "vox" / "enabled").exists()
 
 
 @pytest.mark.subprocess
@@ -542,3 +544,23 @@ def test_doctor_reports_shared_guide_still_loads_when_locally_disabled(
     results = GuideCheck().run()
     messages = [r.message for r in results]
     assert any("shared guide still loads" in m for m in messages)
+
+
+@pytest.mark.subprocess
+def test_nested_enabled_repo_inheriting_disabled_outer_config_defaults_notify_y(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Nested enabled repo inheriting outer disabled config defaults notify to y."""
+    outer_dir = tmp_path / "outer"
+    outer_dir.mkdir()
+    outer = _init_repo_with_baseline(outer_dir)
+    outer_cfg = outer / ".punt-labs" / "vox"
+    outer_cfg.mkdir(parents=True, exist_ok=True)
+    (outer_cfg / "vox.md").write_text("---\n---\n", encoding="utf-8")
+
+    nested_dir = outer / "nested"
+    nested_dir.mkdir()
+    nested = _init_repo_with_baseline(nested_dir)
+    RepoEnablement.for_repo(nested, scope="local").enable()
+    monkeypatch.chdir(nested)
+    assert ConfigStore(outer_cfg).read().notify == "y"
