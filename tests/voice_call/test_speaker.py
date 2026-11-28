@@ -66,6 +66,7 @@ async def test_close_does_not_fail_on_a_lost_device() -> None:
     await speaker.play(Audio(b"a", 1))
     await speaker.close()
     assert not playback.mutex.locked()
+    assert speaker.notes == ("output device stopped before the PCM stream played out",)
 
 
 async def test_the_call_keeps_the_output_across_a_cut() -> None:

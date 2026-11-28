@@ -109,14 +109,15 @@ class AgentSpeaker:
     async def close(self, *, is_teardown: bool = True) -> None:
         """Release the reply's sink and the playback mutex.
 
-        A teardown ignores a device that was already lost: the call is ending
-        anyway. :meth:`finish` is not one, and lets the loss through.
+        A teardown records a lost device as a note instead of raising: the call
+        is ending anyway. :meth:`finish` is not one, and lets the loss through.
         """
         try:
             await self._end_reply()
-        except OutputDeviceLostError:
+        except OutputDeviceLostError as exc:
             if not is_teardown:
                 raise
+            self._notes.append(str(exc))  # the call ends anyway; the loss stays visible
         finally:
             held, self._held = self._held, AsyncExitStack()
             self._owns = False
