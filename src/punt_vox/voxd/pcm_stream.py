@@ -36,6 +36,7 @@ from punt_vox.voxd.pcm_audio import (
     PcmDuration,
 )
 from punt_vox.voxd.pcm_gap import GapSmoother
+from punt_vox.voxd.pcm_loss import DeviceLoss
 from punt_vox.voxd.pcm_output import (
     DeviceCall,
     OutputDeviceLostError,
@@ -89,6 +90,8 @@ class PcmStreamSink:
         "_fed",
         "_gap",
         "_loop",
+        "_lost_before_flush",
+        "_note",
         "_opened_at",
         "_phase",
         "_played",
@@ -104,7 +107,9 @@ class PcmStreamSink:
     _drained: bool
     _fed: int
     _gap: GapSmoother
+    _lost_before_flush: bool  # A flush found the device already lost.
     _loop: asyncio.AbstractEventLoop
+    _note: str | None  # The closing report's note; None until closed.
     _opened_at: float
     _phase: SinkPhase
     _played: int
@@ -122,7 +127,9 @@ class PcmStreamSink:
         self._drained = False
         self._fed = 0
         self._gap = GapSmoother()
+        self._lost_before_flush = False
         self._loop = loop
+        self._note = None
         self._opened_at = time.monotonic()
         self._phase = "streaming"
         self._played = 0
@@ -134,6 +141,11 @@ class PcmStreamSink:
     def phase(self) -> SinkPhase:
         """Return where the sink is in its lifecycle."""
         return self._phase
+
+    @property
+    def note(self) -> str | None:
+        """Return a non-fatal degradation of the closed stream, or None."""
+        return self._note
 
     @property
     def played(self) -> PcmDuration:
@@ -166,7 +178,7 @@ class PcmStreamSink:
         sink is a caller bug and raises :class:`ValueError`; feeding after
         the device stopped on its own raises :class:`OutputDeviceLostError`.
         """
-        if self._watch.is_lost:
+        if self._watch.loss is not None:
             msg = "output device stopped; the PCM stream cannot play more audio"
             raise OutputDeviceLostError(msg)
         if self._phase not in {"streaming", "interrupted"}:
@@ -191,6 +203,7 @@ class PcmStreamSink:
         started = time.monotonic()
         if self._is_settled:
             return FlushReport(PcmDuration(0), 0.0)
+        self._lost_before_flush = self._watch.loss is not None
         dropped = PcmDuration(self._buffer.clear())
         self._dropped += dropped.nbytes
         self._phase = "interrupted"
@@ -240,7 +253,7 @@ class PcmStreamSink:
         device that has gone away without saying so.
         """
         await self._watch.until(self._done)
-        if self._watch.is_lost:
+        if self._watch.loss is not None:
             msg = "output device stopped before the PCM stream ended"
             raise OutputDeviceLostError(msg)
 
@@ -278,10 +291,11 @@ class PcmStreamSink:
             if stream is not None:
                 # stop() waits for the device to play what it holds: only after
                 # the device said it did (finished_callback) is that instant.
-                drain = is_played_out and not self._watch.is_lost
+                drain = is_played_out and self._watch.loss is None
                 await StreamRelease.run(stream, drain=drain)
         finally:
             report = self._report(interrupted=ending == "interrupted")
+            self._note = report.note
         return report
 
     @property
@@ -311,7 +325,7 @@ class PcmStreamSink:
         """
         if self._stream is None or not self._is_report_owed:
             return False
-        return not self._watch.is_lost and await self._watch.played_out()
+        return self._watch.loss is None and await self._watch.played_out()
 
     def _report(self, *, interrupted: bool) -> StreamReport:
         """Build and log the closing report, at WARNING if playback degraded."""
@@ -327,7 +341,8 @@ class PcmStreamSink:
             idle_gaps=self._gap.idle_gaps,
             trailing_gap=self._gap.trailing,
             device_flags=self._device_flags,
-            device_lost=self._watch.is_lost,
+            device_loss=self._watch.loss,
+            lost_before_flush=self._lost_before_flush,
         )
         logger.log(
             logging.WARNING if report.degraded else logging.INFO,
@@ -367,7 +382,7 @@ class PcmStreamSink:
         if self._phase == "closed" or self._drained or self._completing:
             self._watch.finished()
             return
-        self._watch.lose()
+        self._watch.lose(DeviceLoss.STOPPED)
         self._watch.signal(self._done)
 
     def _callback(

@@ -8,6 +8,7 @@ check invariants that hold under every interleaving rather than one order.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import struct
 import threading
@@ -22,6 +23,7 @@ from punt_vox.voxd import pcm_watch
 from punt_vox.voxd.conversation_mode.device_table import DeviceTable
 from punt_vox.voxd.pcm_audio import PCM_SAMPLE_RATE_HZ
 from punt_vox.voxd.pcm_gap import FADE_FRAMES
+from punt_vox.voxd.pcm_loss import DeviceLoss
 from punt_vox.voxd.pcm_output import (
     OutputCallback,
     OutputDeviceLostError,
@@ -842,21 +844,62 @@ class TestPlaybackQueueOwnership:
         assert not playback.mutex.locked()
         assert device.opened.aborted
 
-    async def test_a_finished_stream_the_device_never_plays_out_fails_the_exit(
+    async def test_a_device_that_confirms_late_is_a_note_not_a_failure(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A hang-up must not report a normal end for audio nobody heard."""
+        """Every block reached the device: the person heard the whole reply."""
         monkeypatch.setattr(pcm_watch, "PLAYOUT_WAIT_S", 0.05)
         device = FakeDevice()
         playback = PlaybackQueue(device)
-        with pytest.raises(OutputDeviceLostError):
-            async with playback.stream_pcm() as sink:
-                sink.feed(ms_of(OLD, 20))
-                sink.finish()
-                device.opened.reports_finished = False  # it never confirms
-                device.opened.pull(3)
+        async with playback.stream_pcm() as sink:
+            sink.feed(ms_of(OLD, 20))
+            sink.finish()
+            device.opened.reports_finished = False  # the confirmation is late
+            device.opened.pull(3)
         assert device.opened.aborted
         assert not playback.mutex.locked()
+        assert sink.note == DeviceLoss.UNCONFIRMED.message
+
+    async def test_a_device_that_stopped_fails_the_exit_and_says_so(self) -> None:
+        playback = PlaybackQueue(device := FakeDevice())
+        with pytest.raises(OutputDeviceLostError) as failed:
+            async with playback.stream_pcm() as sink:
+                sink.feed(ms_of(OLD, 100))
+                device.opened.finished_callback()  # PortAudio stopped on its own
+        assert str(failed.value) == DeviceLoss.STOPPED.message
+        assert device.opened.closed
+        assert not playback.mutex.locked()
+
+    async def test_a_device_that_stalled_fails_the_exit_and_says_so(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(pcm_watch, "STALL_WAIT_S", 0.01)
+        playback = PlaybackQueue(device := FakeDevice())
+        with pytest.raises(OutputDeviceLostError) as failed:
+            async with playback.stream_pcm() as sink:
+                sink.feed(ms_of(OLD, 100))
+                sink.finish()
+                with contextlib.suppress(OutputDeviceLostError):
+                    await asyncio.wait_for(sink.wait(), timeout=2)  # no callbacks
+        assert str(failed.value) == DeviceLoss.STALLED.message
+        assert device.opened.closed
+
+    async def test_a_release_error_does_not_replace_the_callers_error(self) -> None:
+        playback = PlaybackQueue(device := FakeDevice())
+        with pytest.raises(RuntimeError, match="call dropped") as caller:
+            async with playback.stream_pcm():
+                device.opened.abort_error = OSError("device unplugged")
+                raise RuntimeError("call dropped")
+        assert any("device unplugged" in n for n in caller.value.__notes__)
+        assert device.opened.closed
+
+    async def test_a_device_lost_before_a_barge_in_leaves_a_note(self) -> None:
+        playback = PlaybackQueue(device := FakeDevice())
+        async with playback.stream_pcm() as sink:
+            sink.feed(ms_of(OLD, 100))
+            device.opened.finished_callback()  # the device dies mid-reply
+            sink.flush()  # the person talks into the silence
+        assert sink.note == "output device was lost before the reply was cut"
 
     async def test_a_flushed_stream_the_device_never_confirms_exits_quietly(
         self, monkeypatch: pytest.MonkeyPatch

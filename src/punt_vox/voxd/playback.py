@@ -17,7 +17,7 @@ from typing import Self
 from punt_vox.voxd.audio_context import AudioContext, AudioFile
 from punt_vox.voxd.conversation_mode.counted_output import CountedOutput
 from punt_vox.voxd.conversation_mode.device_table import DeviceTable
-from punt_vox.voxd.pcm_output import OutputDeviceLostError, OutputStreamFactory
+from punt_vox.voxd.pcm_output import OutputStreamFactory
 from punt_vox.voxd.pcm_stream import PcmStreamSink
 from punt_vox.voxd.playback_result import PlaybackResult
 from punt_vox.voxd.voice_agent.call_overrides import CallOverrides
@@ -171,14 +171,17 @@ class PlaybackQueue:
             await sink.open(CountedOutput(self._output_stream, self._table))
             try:
                 yield sink
-            except BaseException:
+            except BaseException as caller_error:
                 # Releasing must not hide why the caller left.
-                await sink.close()
+                try:
+                    await sink.close()
+                except Exception as release_error:
+                    logger.exception("releasing the PCM device after a caller error")
+                    caller_error.add_note(
+                        f"releasing the PCM device failed: {release_error!r}"
+                    )
                 raise
-            report = await sink.close()
-            if report.is_playout_failed:
-                msg = "output device stopped before the PCM stream played out"
-                raise OutputDeviceLostError(msg)
+            (await sink.close()).check_played_out()
 
     def set_last_result(self, value: PlaybackResult | None) -> None:
         """Set the last playback result. Used by delegation and tests."""

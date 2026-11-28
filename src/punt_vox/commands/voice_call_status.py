@@ -19,6 +19,7 @@ class _CallStatus(TypedDict, total=False):
     call_id: str
     trace: str
     error: str | None  # None unless the call failed.
+    notes: list[str]  # Non-fatal output-device degradations.
     ended_by: str | None  # None until the call ended without failing.
     transcript: list[object]
     tool_calls: list[object]
@@ -110,6 +111,7 @@ class CallStatusView:
         lines.extend(self._tool_line(call) for call in self._entries("tool_calls"))
         if self.ended_by:
             lines.append(f"ended by {self.ended_by}")
+        lines.extend(f"note: {note}" for note in self._status.get("notes", []))
         if error := self._status.get("error"):
             lines.append(f"error: {error}")
         if self.trace:

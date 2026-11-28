@@ -27,7 +27,7 @@ class TestUntil:
         await asyncio.sleep(0.01)
         done.set()
         await asyncio.wait_for(waiting, timeout=1)
-        assert not watch.is_lost
+        assert watch.loss is None
 
     async def test_a_device_with_no_callbacks_is_lost_with_a_log_line(
         self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
@@ -39,7 +39,7 @@ class TestUntil:
             pytest.raises(OutputDeviceLostError),
         ):
             await asyncio.wait_for(watch.until(asyncio.Event()), timeout=2)
-        assert watch.is_lost
+        assert watch.loss is not None
         assert "no callback for at least 0.01 s" in caplog.text
 
     async def test_a_device_that_keeps_calling_back_is_waited_for(
@@ -54,7 +54,7 @@ class TestUntil:
             watch.tick()
         done.set()
         await asyncio.wait_for(waiting, timeout=1)
-        assert not watch.is_lost
+        assert watch.loss is None
 
 
 class TestPlayedOut:
@@ -64,7 +64,7 @@ class TestPlayedOut:
         await asyncio.sleep(0.01)
         await asyncio.to_thread(watch.finished)  # the device thread
         assert await asyncio.wait_for(waiting, timeout=1)
-        assert not watch.is_lost
+        assert watch.loss is None
 
     async def test_false_and_lost_when_the_device_never_does(
         self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
@@ -73,7 +73,7 @@ class TestPlayedOut:
         watch = DeviceWatch(asyncio.get_running_loop())
         with caplog.at_level(logging.WARNING, logger="punt_vox.voxd.pcm_watch"):
             assert not await watch.played_out()
-        assert watch.is_lost
+        assert watch.loss is not None
         assert "did not finish playing" in caplog.text
 
 

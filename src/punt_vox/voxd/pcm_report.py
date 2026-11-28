@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from typing import final
 
 from punt_vox.voxd.pcm_audio import PcmDuration
+from punt_vox.voxd.pcm_loss import DeviceLoss
+from punt_vox.voxd.pcm_output import OutputDeviceLostError
 
 __all__ = ["FlushReport", "StreamReport"]
 
@@ -33,7 +35,8 @@ class StreamReport:
     the stream ended in (a barge-in, or the hang-up) cannot be told from
     either, so it is neither: its length is ``trailing_gap``.
     ``device_flags`` counts callbacks PortAudio flagged (under/overflow,
-    priming), and ``device_lost`` is set when the device stopped on its own.
+    priming), and ``device_loss`` says why the device was lost, if it was.
+    ``lost_before_flush`` is set when a barge-in found the device already lost.
     """
 
     fed: PcmDuration
@@ -46,20 +49,44 @@ class StreamReport:
     idle_gaps: int
     trailing_gap: PcmDuration
     device_flags: int
-    device_lost: bool
+    device_loss: DeviceLoss | None  # None while the device stayed healthy.
+    lost_before_flush: bool
 
     @property
     def degraded(self) -> bool:
         """Return whether the device starved, flagged, or stopped on its own."""
-        return bool(self.underflows or self.device_flags or self.device_lost)
+        return bool(
+            self.underflows
+            or self.device_flags
+            or self.device_lost
+            or self.lost_before_flush
+        )
 
     @property
-    def is_playout_failed(self) -> bool:
-        """Return whether the device stopped before the stream played out.
+    def device_lost(self) -> bool:
+        """Return whether the device stopped, stalled or never confirmed."""
+        return self.device_loss is not None
 
-        A flush (a barge-in) is deliberate: the device is abandoned, not lost.
+    def check_played_out(self) -> None:
+        """Raise :class:`OutputDeviceLostError` if audio was lost to the device.
+
+        A flush (a barge-in) is deliberate, and a device that merely confirmed
+        late heard every block: neither fails the stream.
         """
-        return self.device_lost and not self.interrupted
+        loss = self.device_loss
+        if loss is not None and loss.is_fatal and not self.interrupted:
+            raise OutputDeviceLostError(loss.message)
+
+    @property
+    def note(self) -> str | None:
+        """Return a non-fatal degradation a call status should show, if any."""
+        if self.interrupted:
+            if self.lost_before_flush:
+                return "output device was lost before the reply was cut"
+            return None
+        if self.device_loss is DeviceLoss.UNCONFIRMED:
+            return self.device_loss.message
+        return None
 
     def describe(self, elapsed_ms: float) -> str:
         """Return the closing log line for a stream that lived *elapsed_ms*."""
@@ -70,5 +97,5 @@ class StreamReport:
             f"underflows={self.underflows} (total {self.gap_total.ms:.0f} ms, "
             f"longest {self.gap_longest.ms:.0f} ms), idle_gaps={self.idle_gaps}, "
             f"trailing_gap={self.trailing_gap.ms:.0f} ms, "
-            f"device_flags={self.device_flags}, device_lost={self.device_lost}"
+            f"device_flags={self.device_flags}, device_loss={self.device_loss}"
         )

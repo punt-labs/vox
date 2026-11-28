@@ -227,6 +227,7 @@ class VoiceAgentCall:
             "state": self._state,
             "conversation_id": self._conversation_id,
             "error": self._error,
+            "notes": list(self._speaker.notes),
             "ended_by": None if self._ended_by is None else self._ended_by.value,
             "replayed_tool_calls": self._tools.replayed,
             "transcript": self._transcript.turns(),

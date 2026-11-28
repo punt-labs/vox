@@ -7,6 +7,7 @@ import contextlib
 import logging
 from typing import Self, final
 
+from punt_vox.voxd.pcm_loss import DeviceLoss
 from punt_vox.voxd.pcm_output import OutputDeviceLostError
 
 logger = logging.getLogger(__name__)
@@ -33,34 +34,35 @@ class DeviceWatch:
     releases it with ``abort()``, which does not wait for the device.
     """
 
-    __slots__ = ("_callbacks", "_is_lost", "_loop", "_played_out")
+    __slots__ = ("_callbacks", "_loop", "_loss", "_played_out")
 
     _callbacks: int
-    _is_lost: bool
     _loop: asyncio.AbstractEventLoop
+    _loss: DeviceLoss | None  # None while the device is healthy.
     _played_out: asyncio.Event
 
     def __new__(cls, loop: asyncio.AbstractEventLoop) -> Self:
         """Watch a device whose events are delivered on *loop*."""
         self = super().__new__(cls)
         self._callbacks = 0
-        self._is_lost = False
         self._loop = loop
+        self._loss = None
         self._played_out = asyncio.Event()
         return self
 
     @property
-    def is_lost(self) -> bool:
-        """Return whether the device stopped on its own or stopped answering."""
-        return self._is_lost
+    def loss(self) -> DeviceLoss | None:
+        """Return why the device was lost first, or None while it is healthy."""
+        return self._loss
 
     def tick(self) -> None:
         """Device thread: one callback ran."""
         self._callbacks += 1
 
-    def lose(self) -> None:
-        """Mark the device lost."""
-        self._is_lost = True
+    def lose(self, loss: DeviceLoss) -> None:
+        """Mark the device lost; the first cause stays."""
+        if self._loss is None:
+            self._loss = loss
 
     def finished(self) -> None:
         """Device thread: the stream finished having played its last block."""
@@ -89,9 +91,8 @@ class DeviceWatch:
                         "giving up the wait",
                         STALL_WAIT_S,
                     )
-                    self._is_lost = True
-                    msg = "output device made no progress; the PCM stream stalled"
-                    raise OutputDeviceLostError(msg) from None
+                    self._loss = self._loss or DeviceLoss.STALLED
+                    raise OutputDeviceLostError(DeviceLoss.STALLED.message) from None
                 calls = self._callbacks
 
     async def played_out(self) -> bool:
@@ -104,6 +105,6 @@ class DeviceWatch:
                 "PCM device did not finish playing within %.1f s; aborting it",
                 PLAYOUT_WAIT_S,
             )
-            self._is_lost = True
+            self._loss = self._loss or DeviceLoss.UNCONFIRMED
             return False
         return True

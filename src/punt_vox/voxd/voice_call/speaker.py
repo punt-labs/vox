@@ -31,6 +31,7 @@ class AgentSpeaker:
         "_breaks",
         "_cut",
         "_held",
+        "_notes",
         "_owns",
         "_playback",
         "_reply",
@@ -43,6 +44,7 @@ class AgentSpeaker:
     _sink: PcmStreamSink | None  # None between replies and after a cut.
     _cut: int  # The newest interrupted response; its audio is never played.
     _breaks: UtteranceBreaks
+    _notes: list[str]  # Non-fatal device degradations, one per affected reply.
 
     def __new__(cls, playback: PlaybackQueue) -> Self:
         """Bind the daemon's playback queue."""
@@ -52,7 +54,13 @@ class AgentSpeaker:
         self._sink, self._owns = None, False
         self._cut = -1
         self._breaks = UtteranceBreaks()
+        self._notes = []
         return self
+
+    @property
+    def notes(self) -> tuple[str, ...]:
+        """Return what degraded the output without failing the call."""
+        return tuple(self._notes)
 
     async def play(self, audio: Audio) -> None:
         """Queue one chunk, opening a sink for a new response."""
@@ -78,13 +86,13 @@ class AgentSpeaker:
             self._sink.flush()
         await self._end_reply()
 
+    # Optional by contract: None means the reply played out, not a missing value.
     async def finish(self) -> str | None:
         """Let audio already received play out, then release the output.
 
         Returns why the last reply did not play out (the device stopped before
         it did), or None when it did. The output is released either way.
         """
-        # Absence is the contract: None means the reply played out.
         failure: str | None = None
         try:
             if self._sink is not None:
@@ -93,30 +101,33 @@ class AgentSpeaker:
                     await self._sink.wait()
         finally:
             try:
-                await self._release()
+                await self.close(is_teardown=False)
             except OutputDeviceLostError as exc:
                 failure = str(exc)
         return failure
 
-    async def close(self) -> None:
-        """Release the reply's sink and the playback mutex: a deliberate teardown.
+    async def close(self, *, is_teardown: bool = True) -> None:
+        """Release the reply's sink and the playback mutex.
 
-        A device that was already lost is not a failure here; the call is
-        ending anyway.
+        A teardown ignores a device that was already lost: the call is ending
+        anyway. :meth:`finish` is not one, and lets the loss through.
         """
-        with suppress(OutputDeviceLostError):
-            await self._release()
-
-    async def _release(self) -> None:
         try:
             await self._end_reply()
+        except OutputDeviceLostError:
+            if not is_teardown:
+                raise
         finally:
             held, self._held = self._held, AsyncExitStack()
             self._owns = False
             await held.aclose()
 
     async def _end_reply(self) -> None:
-        self._sink = None
+        sink, self._sink = self._sink, None
         self._breaks.reset()
         reply, self._reply = self._reply, AsyncExitStack()
-        await reply.aclose()
+        try:
+            await reply.aclose()
+        finally:
+            if sink is not None and sink.note is not None:
+                self._notes.append(sink.note)
