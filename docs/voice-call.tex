@@ -7,6 +7,10 @@
 % AgentSpeaker, and the per-call tool result cache. The tests in
 % tests/voice_call/ assert the named properties.
 %
+% PL-1779 adds the session handoff: a briefed call collects the person's
+% answers and decisions while it is live and seals them as complete or
+% partial before it settles. The design is docs/voice-call-handoff.md.
+%
 
 \documentclass[a4paper,10pt,fleqn]{article}
 \usepackage[margin=1in]{geometry}
@@ -15,7 +19,7 @@
 \begin{document}
 
 \title{Vox Call: A Z Specification}
-\author{Punt Labs, for PL-1371}
+\author{Punt Labs, for PL-1371 and PL-1779}
 \date{November 2026}
 \maketitle
 
@@ -29,7 +33,12 @@ While a call holds the output, it owns the playback mutex across replies;
 an interruption ends the current reply only. Each tool call is keyed by its
 canonical arguments; a durable key runs its operation at most once per call.
 
-The model names twelve properties:
+A call started with a brief from a coding session also collects a
+handoff: the person's answers, decisions and instructions, noted while the
+call is live and sealed when it ends. The handoff section names eight more
+properties, H1 to H8, and leaves C1 to C12 as they are.
+
+The model names twelve call properties:
 
 \begin{enumerate}
   \item[C1] \emph{One call}: a second \texttt{call\_start} is refused while a
@@ -601,6 +610,179 @@ its bounded queue; the cut filters duplicates among events that remain queued.
     snapshotted = ztrue \land departed' = ztrue \land cursor' = known \\
   established? = zfalse \implies departed' = departed \land cursor' = cursor
 \end{schema}
+
+\section{Session handoff}
+
+A call started from a coding session may carry a brief: a distilled
+description of the session's situation and the questions it needs
+answered. The agent asks them, notes each answer, decision and
+instruction while the call is live, and the daemon seals the notes as a
+\emph{handoff} when the call ends. The handoff is \emph{complete} only when
+the agent hung up after every question was resolved; every other ending of
+a briefed call, including a failure, seals it \emph{partial}, so the
+session is told that the record may be short.
+
+\begin{zed}
+  [QUESTION, NOTE] \\
+  HANDOFF ::= noBrief | collecting | complete | partial
+\end{zed}
+
+\texttt{noBrief} is the call as it was before the handoff: no brief, no
+questions, no notes. \texttt{collecting} is a briefed call that has not
+sealed. \texttt{QUESTION} is a question the brief asked; \texttt{NOTE} is
+one recorded item (an answer, decision, instruction or open point).
+
+\begin{schema}{HandoffRecord}
+  handoff : HANDOFF \\
+  asked, resolved : \power QUESTION \\
+  noted : \power NOTE
+\where
+  resolved \subseteq asked \\
+  handoff = noBrief \implies (asked = \emptyset \land noted = \emptyset)
+\end{schema}
+
+\texttt{resolved} holds the questions the person answered or deferred
+aloud; a question never discussed stays in \texttt{asked} alone and the
+daemon lists it as unresolved when it seals.
+
+\begin{schema}{Briefed}
+  Call \\
+  HandoffRecord
+\where
+  call = idle \implies handoff = noBrief \\
+  call \in \{ connecting, live \} \implies handoff \in \{ noBrief, collecting \} \\
+  handoff \in \{ complete, partial \} \implies call \in \{ ended, failed \} \\
+  settled = ztrue \implies handoff \neq collecting \\
+  handoff = complete \implies
+    (call = ended \land endedBy = byAgent \land asked \subseteq resolved) \\
+  call = failed \implies handoff \neq complete
+\end{schema}
+
+The last three predicates are H3 to H5; a failed call that has not yet
+sealed is still \emph{collecting}, and the seal turns it partial. A terminal call can show
+\emph{collecting} between \texttt{End} and the seal, as it can show
+\texttt{settled = zfalse} between \texttt{End} and \texttt{SettleCall};
+the fourth predicate is why the seal comes first.
+
+The handoff adds eight properties:
+
+\begin{enumerate}
+  \item[H1] \emph{Starts as asked}: a call started with a brief begins
+    \emph{collecting} with every question asked and nothing resolved or
+    noted; a call started without one begins \emph{noBrief}, the call as
+    before.
+  \item[H2] \emph{Notes only while live}: a note is accepted only on a live,
+    collecting call, and only against questions the brief asked.
+  \item[H3] \emph{Sealed before settled}: no settled call is still
+    collecting, so a status reply that shows a settled call shows a sealed
+    handoff.
+  \item[H4] \emph{Complete is earned}: a complete handoff means the agent
+    ended the call (C12) and every question was resolved.
+  \item[H5] \emph{Partial is stated}: a briefed call that ended without
+    earning complete, or failed, is partial; a failed call is never
+    complete.
+  \item[H6] \emph{Notes survive the cut}: sealing keeps every note made
+    while the call was live, whatever ended it.
+  \item[H7] \emph{Durable once}: a re-asked note replays and adds no second
+    note (C6).
+  \item[H8] \emph{A sealed handoff stays}: nothing but the next
+    \texttt{Start} changes a complete or partial handoff (C3).
+\end{enumerate}
+
+\begin{schema}{InitHandoff}
+  HandoffRecord'
+\where
+  handoff' = noBrief \\
+  asked' = \emptyset \\
+  resolved' = \emptyset \\
+  noted' = \emptyset
+\end{schema}
+
+\begin{schema}{BeginHandoff}
+  \Delta HandoffRecord \\
+  questions? : \power QUESTION
+\where
+  handoff' = collecting \\
+  asked' = questions? \\
+  resolved' = \emptyset \\
+  noted' = \emptyset
+\end{schema}
+
+\begin{schema}{BeginNoHandoff}
+  \Delta HandoffRecord
+\where
+  handoff' = noBrief \\
+  asked' = \emptyset \\
+  resolved' = \emptyset \\
+  noted' = \emptyset
+\end{schema}
+
+\begin{schema}{NoteHandoff}
+  \Delta HandoffRecord \\
+  Call \\
+  note? : NOTE \\
+  answers? : \power QUESTION
+\where
+  call = live \\
+  handoff = collecting \\
+  note? \notin noted \\
+  answers? \subseteq asked \\
+  noted' = noted \cup \{ note? \} \\
+  resolved' = resolved \cup answers? \\
+  asked' = asked \\
+  handoff' = handoff
+\end{schema}
+
+\texttt{answers?} is the questions this note resolves: one for an answer
+or a deferral, none for a decision, an instruction or an open point.
+
+\begin{schema}{SealHandoff}
+  \Delta HandoffRecord \\
+  \Xi Call
+\where
+  call \in \{ ended, failed \} \\
+  handoff = collecting \\
+  asked' = asked \\
+  resolved' = resolved \\
+  noted' = noted \\
+  (call = ended \land endedBy = byAgent \land asked \subseteq resolved)
+    \implies handoff' = complete \\
+  \lnot (call = ended \land endedBy = byAgent \land asked \subseteq resolved)
+    \implies handoff' = partial
+\end{schema}
+
+\texttt{SealHandoff} runs in the call task's settle step, after the call
+has ended or failed and before \texttt{SettleCall}. It frames
+\texttt{noted} and \texttt{resolved}, which is H6. A call cancelled
+before its task ran never dialed, so it seals partial with no notes.
+
+The call operations above act on \texttt{Call}. In a briefed daemon each
+one is lifted by \texttt{HandoffRecord} unchanged, except the four that
+start, note, end-and-settle or seal.
+
+\begin{zed}
+  StartBriefed \defs (Start \land BeginHandoff) \land \Delta Briefed \\
+  StartPlain \defs (Start \land BeginNoHandoff) \land \Delta Briefed \\
+  NoteDurable \defs (RunDurable \land NoteHandoff) \land \Delta Briefed \\
+  ReplayNote \defs Replay \land \Xi HandoffRecord \\
+  SealBriefed \defs SealHandoff \land \Delta Briefed \\
+  ProvisionAgentB \defs ProvisionAgent \land \Xi HandoffRecord \land \Delta Briefed \\
+  ConnectB \defs Connect \land \Xi HandoffRecord \land \Delta Briefed \\
+  AgentEndCallB \defs AgentEndCall \land \Xi HandoffRecord \land \Delta Briefed \\
+  EndB \defs End \land \Xi HandoffRecord \land \Delta Briefed \\
+  SpeakB \defs Speak \land \Xi HandoffRecord \land \Delta Briefed \\
+  InterruptB \defs Interrupt \land \Xi HandoffRecord \land \Delta Briefed \\
+  FinishB \defs Finish \land \Xi HandoffRecord \land \Delta Briefed \\
+  SettleCallB \defs SettleCall \land \Xi HandoffRecord \land \Delta Briefed
+\end{zed}
+
+\texttt{SettleCallB} has an invariant-derived precondition: it applies
+only to a call whose handoff is not \emph{collecting} (H3), so the
+implementation must seal first. \texttt{StartBriefed} and
+\texttt{StartPlain} replace the previous call's sealed handoff; the
+previous handoff has been delivered in the status reply and the durable
+file by then. A named stop in the briefed state is
+\texttt{EndNamed}, then \texttt{SealBriefed}, then \texttt{SettleCallB}.
 
 \section{Music suspension}
 
