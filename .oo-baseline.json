@@ -7113,10 +7113,10 @@
   "src/punt_vox/voxd/voice_call/call.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
-    "avg_params": 1.47,
+    "avg_params": 1.45,
     "max_complexity": 9.0,
-    "avg_complexity": 2.68,
-    "module_size": 265.0,
+    "avg_complexity": 2.65,
+    "module_size": 273.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,

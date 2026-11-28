@@ -123,7 +123,7 @@ class VoiceAgentCall:
             async with self._progress.subscribe() as queue:
                 await self._converse(dial, queue, covered)
         except* EOFError:
-            self._hang_up(CallEnd.PEER)
+            self._note_hang_up(CallEnd.PEER)
             hung_up = True
         except* ConvAIError as faults:
             # After the agent's end_call the provider closes the conversation;
@@ -131,7 +131,7 @@ class VoiceAgentCall:
             if self._ended_by is CallEnd.AGENT:
                 details = [str(fault) for fault in faults.exceptions]
                 self._trace.record("note", "agent_end_close", {"faults": details})
-                self._hang_up(CallEnd.AGENT)
+                self._note_hang_up(CallEnd.AGENT)
                 hung_up = True
             else:
                 self.mark_failed(self._failure_text(faults.exceptions[0]))
@@ -147,6 +147,10 @@ class VoiceAgentCall:
     def _hang_up(self, ended_by: CallEnd) -> None:
         """End the call without failing; the agent's end_call stays who ended it."""
         self._state = "ended"
+        self._note_hang_up(ended_by)
+
+    def _note_hang_up(self, ended_by: CallEnd) -> None:
+        """Record who hung up; the call stays non-final until the reply plays out."""
         if self._ended_by is None:
             self._ended_by = ended_by
 
@@ -162,7 +166,7 @@ class VoiceAgentCall:
         hung_up: bool,
     ) -> None:
         """End the call: release the speaker, then depart, then play out a hang-up."""
-        if self._state in {"connecting", "live"}:
+        if not hung_up and self._state in {"connecting", "live"}:
             self._hang_up(CallEnd.CALLER)
         self._connected.set()
         try:
@@ -177,9 +181,15 @@ class VoiceAgentCall:
                     await self._play_out()
 
     async def _play_out(self) -> None:
-        """Let the last reply finish; a device that never played it fails the call."""
-        if (unplayed := await self._speaker.finish()) is not None:
-            self.mark_failed(unplayed)
+        """Let the last reply finish, then settle the call: ended, or failed."""
+        unplayed: str | None = None
+        try:
+            unplayed = await self._speaker.finish()
+        finally:
+            if unplayed is None:
+                self._state = "ended"
+            else:
+                self.mark_failed(unplayed)
 
     async def _converse(
         self,

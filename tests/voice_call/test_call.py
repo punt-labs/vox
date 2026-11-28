@@ -318,6 +318,44 @@ async def test_a_hangup_whose_device_confirmed_late_ends_normally_with_a_note(
     assert status["notes"] == [DeviceLoss.UNCONFIRMED.message]
 
 
+async def test_a_hangup_is_not_final_until_the_last_reply_played_out(
+    tmp_path: Path,
+) -> None:
+    """Clients stop following at "ended": it must not precede a failure."""
+
+    async def peer(socket: ServerConnection) -> None:
+        await socket.recv()
+        await socket.send(json.dumps(_METADATA))
+        await socket.send(_audio(b"\x01\x00" * 8, 1))
+
+    pcm = tmp_path / "turn.pcm"
+    pcm.write_bytes(bytes(640))
+    playback = UnconfirmedPlayback()
+    playback.play_out_s = 0.3
+    states: list[object] = []
+    async with asyncio.timeout(10), serve(peer, "127.0.0.1", 0) as server:
+        port = server.sockets[0].getsockname()[1]
+        handlers = _handlers(
+            FakeWorkers(),
+            playback,
+            tmp_path,
+            connector=_Connector(f"ws://127.0.0.1:{port}/convai"),
+            opener=_LOOPBACK,
+        )
+        await _rpc(handlers, {"type": "call_start", "script": [{"pcm_path": str(pcm)}]})
+        while not states or states[-1] not in {"ended", "failed"}:
+            status = cast(
+                "dict[str, object]",
+                (await _rpc(handlers, {"type": "call_status"}))["result"],
+            )
+            states.append(status["state"])
+            await asyncio.sleep(0.005)
+        await _rpc(handlers, {"type": "call_stop"})
+    assert "ended" not in states
+    assert states[-1] == "failed"
+    assert status["ended_by"] is None
+
+
 _END_CALL_ACK = {
     "type": "agent_tool_response",
     "agent_tool_response": {
