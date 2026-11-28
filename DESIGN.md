@@ -4115,3 +4115,89 @@ made 2026-11-26 and 2026-11-27.
 | ElevenLabs Studio as the generation backend | Closed to this account, and built for a person producing a book in an editor. |
 | A language model inside vox, so the daemon can write the next part | The agent in the session already knows the code and the day's work. vox stays a pipe to the speech engine. |
 | Build podcast first, as the earlier phase order had it | The harder engine path would gate the simpler one. |
+
+## DES-077: The Clarification Call — A Session Briefs the Call Agent and Gets the Person's Answers Back
+
+**Status:** decided (2026-11-28, PL-1779). Design mission `m-2026-11-28-002`,
+accepted by the evaluator in round 2. The operator did not rule on the four
+choices below and told the leader to proceed without waiting, so each
+recommendation stands; the operator can overrule any of them.
+Amends DES-070's sentence "no primary-session snapshot ships" for the briefed
+call only. The full design, with the alternative each decision beat, is
+[`docs/voice-call-handoff.md`](docs/voice-call-handoff.md); the model is the
+"Session handoff" section of [`docs/voice-call.tex`](docs/voice-call.tex).
+
+### Context
+
+Inside a Claude Code session the operator wants to run `/call`, talk through
+the situation the session was discussing, clarify, hang up, and have the
+session carry on with the answers. This replaces the multiple-choice question
+the text mode asks. Today the call agent knows nothing of the session, and the
+call ends with a raw transcript.
+
+### Decisions
+
+1. **The session writes a small JSON brief** to a file with its file tool
+   (never a shell heredoc, which text in the brief could close early) and names
+   it with `vox call --brief <file>`. The CLI sends the content, never the
+   path, because voxd can be on another machine. voxd validates the brief and refuses a bad one before
+   dialing. Caps (3,500 bytes rendered, at most six questions) make "distilled,
+   not a raw transcript" a property of the format. The brief rides the existing
+   per-call prompt override, outside the 10,000-byte worker budget.
+2. **One agent, one tool catalog; the mode is a prompt section.** A briefed
+   call clarifies and asks the questions.
+3. **The agent records answers with a durable `note_handoff` tool** while the
+   call is live. voxd copies each question's ask and options from the brief and
+   assembles the handoff; every unanswered question reads "not discussed". voxd
+   rewrites a private `call-<id>.handoff.json` after each note, so a hang-up or
+   crash loses nothing. Post-call extraction from the transcript lost: it needs
+   a model voxd does not have.
+4. **The handoff is `complete` or `partial`.** `complete` means the agent
+   closed the call and every question is resolved. Every failure or early end
+   is `partial`, with a stated reason. voxd seals the handoff after the call is
+   final (after play-out), in the launcher's `finally` and in `_finished`.
+5. **The return trip is the existing background-command exit.** The handoff is
+   the last block of the `vox call` output; `vox call handoff --call-id <id>`
+   recovers it if the session closed or compacted.
+6. **The raw brief and the rendered prompt are never persisted.** What the
+   agent speaks (topic, questions, options, read-backs) is in the transcript,
+   the status reply, the session and ElevenLabs. Consent is notice, not prior
+   authorization.
+7. **Every briefed call is tainted from its start.** Worker tools wait for a
+   spoken yes, and `decision` and `instruction` notes get a read-back and a
+   yes. The brief is written by a model session that may have read untrusted
+   text, so prompt wording alone is not a gate. `answer` notes are held too: a
+   note the person did not say must never be recorded.
+
+### Operator rulings requested
+
+| Choice | Recommendation |
+|--------|----------------|
+| Brief sent without a per-call "send this?" prompt (`--no-brief`, `/call stop` are the brakes) | yes |
+| Ctrl-C before the agent has ended the call (after it, `complete`) | `partial` |
+| Briefed calls start workers only when asked | yes |
+| Taint every briefed call (a spoken yes per answer, decision or instruction note) | yes |
+
+### Consequences for the implementation mission
+
+- The catalog gains a ninth tool, so `CallControl._TEARDOWN_S` must count
+  `len(BossTools.CATALOG)`, and the next call after the change provisions one
+  fresh agent through the existing replacement path.
+- `RequestGuard`, `ReadBack` and `ToolFields` each need a `note_handoff` case.
+- `seal_handoff()` must not raise inside a `finally`: it logs and seals partial.
+- A re-asked `note_handoff` takes the replay path and never re-enters `pending`;
+  a test pins it.
+- `vox call handoff` requires `--call-id`; there is no current-call or
+  newest-file fallback, so one session never receives another's answers.
+- Unverified and recorded in the design: ElevenLabs conversation retention,
+  latency at about 15,000 bytes of prompt, the file-based command under
+  `Bash(vox call:*)`, and the background exit waking the session.
+
+### Rejected alternatives
+
+| Alternative | Rejected because |
+|-------------|------------------|
+| Dynamic variables, `contextual_update` or a second agent for the brief | The per-call prompt override already exists and carries it; the others add platform surface this design did not verify. |
+| Post-call extraction of the handoff from the transcript | Needs a model voxd does not have, or the platform's asynchronous analysis, which was not verified. |
+| A path instead of content on the command line | voxd can run on another machine. |
+| Trust the prompt wording instead of tainting | A poisoned brief can lead the agent to start a worker with no spoken yes. |
