@@ -6,6 +6,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Callable
+from contextlib import ExitStack, nullcontext
 from typing import Self
 
 from punt_vox import usage
@@ -73,7 +74,7 @@ class SynthesisPipeline:
         Handles API key injection, provider construction, and caching. Per-call
         credentials bypass lookup and store for billing isolation.
         """
-        provider_name = spec.provider or ""
+        name = spec.provider or ""
         request = SpeechPreparation.audio_request(text, spec)
 
         # Anonymous cache only; credentials are deliberately excluded from identity.
@@ -81,31 +82,24 @@ class SynthesisPipeline:
             request.text, spec, len(text), vibe_tags=request.vibe_tags
         )
         if (cached := await lookup.outcome()) is not None:
-            with usage.span("daemon", provider_name, text=text, cached=True):
+            with usage.span("daemon", name, text=text, cached=True):
                 return cached
 
         # Serialize env mutation + synthesis to avoid concurrent os.environ races.
         async with self._env_lock:
             cached = await lookup.outcome()
-            with usage.span(
-                "daemon", provider_name, text=text, cached=cached is not None
-            ):
+            with usage.span("daemon", name, text=text, cached=cached is not None):
                 if cached is not None:
                     return cached
-                with ApiKeyEnv(provider_name, spec.api_key).applied():
-                    provider = get_provider(provider_name, model=spec.model)
-                    output_path = await TempFileSynthesis(
-                        provider, request, len(text)
-                    ).run()
-
-                    # Report caching only when the anonymous write succeeds.
-                    cached_path = lookup.store(output_path)
-                    logger.info(
-                        "synthesized %d chars%s",
-                        len(text),
-                        ", cached" if cached_path else "",
-                    )
-                    return SynthesisOutcome(path=output_path, cached=False)
+                with ApiKeyEnv(name, spec.api_key).applied(), ExitStack() as unclaimed:
+                    provider = get_provider(name, model=spec.model)
+                    temp = TempFileSynthesis(provider, request, len(text))
+                    outcome = SynthesisOutcome(path=await temp.run(), cached=False)
+                    unclaimed.callback(outcome.discard)
+                    suffix = ", cached" if lookup.store(outcome.path) else ""
+                    logger.info("synthesized %d chars%s", len(text), suffix)
+                    unclaimed.pop_all()
+                    return outcome
 
     async def try_direct_play(
         self,
@@ -168,8 +162,8 @@ class SynthesisPipeline:
         queue consumer holds it too -- so two hooks firing at once cannot overlap
         even though direct play bypasses the queue.
         """
+        env_guard: asyncio.Lock | nullcontext[None] = nullcontext()
         if invocation.key_env.injects:
-            async with self._env_lock, self._playback_mutex:
-                return await asyncio.to_thread(invocation.run)
-        async with self._playback_mutex:
+            env_guard = self._env_lock
+        async with env_guard, self._playback_mutex:
             return await asyncio.to_thread(invocation.run)
