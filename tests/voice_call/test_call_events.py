@@ -814,10 +814,12 @@ class _ScriptedSpeaker:
         error: BaseException | None = None,
         *,
         blocks: bool = False,
+        pause_s: float = 0.0,
     ) -> None:
         self.notes: tuple[str, ...] = ()
         self.started = asyncio.Event()
         self._result, self._error, self._blocks = result, error, blocks
+        self._pause_s = pause_s
 
     async def play(self, audio: Audio) -> None:
         del audio
@@ -835,6 +837,7 @@ class _ScriptedSpeaker:
         self.started.set()
         if self._blocks:
             await asyncio.sleep(10)
+        await asyncio.sleep(self._pause_s)
         if self._error is not None:
             raise self._error
         return self._result
@@ -945,6 +948,7 @@ async def test_every_way_a_call_ends_settles_it_once(ending: _Ending) -> None:
     """Once run() and the launcher return, the call is final and consistent."""
     call = _call(ending.peer, speaker=cast("AgentSpeaker", ending.speaker))
     states: list[str] = []
+    live_ended_by: list[object] = []  # ended_by read while the call is non-final
 
     async def launched() -> None:
         try:  # What the launcher does around call.run.
@@ -956,7 +960,10 @@ async def test_every_way_a_call_ends_settles_it_once(ending: _Ending) -> None:
 
     async def poll() -> None:
         while True:
-            states.append(cast("str", call.status()["state"]))
+            status = call.status()
+            states.append(cast("str", status["state"]))
+            if status["state"] in {"connecting", "live"}:
+                live_ended_by.append(status["ended_by"])
             await asyncio.sleep(0.001)
 
     task, poller = asyncio.create_task(launched()), asyncio.create_task(poll())
@@ -982,3 +989,22 @@ async def test_every_way_a_call_ends_settles_it_once(ending: _Ending) -> None:
     notes = cast("list[str]", status["notes"])
     assert (ending.note is None) or any(ending.note in n for n in notes)
     assert not ("ended" in states and "failed" in states[states.index("ended") :])
+    assert set(live_ended_by) <= {None, "agent"}  # a hang-up is nobody's until final
+
+
+async def test_a_remote_hang_up_is_nobodys_until_the_reply_has_played_out() -> None:
+    """docs/voice-call.tex: live implies ended_by is nobody or the agent."""
+    call = _call(_Peer([]), speaker=cast("AgentSpeaker", _ScriptedSpeaker(pause_s=0.1)))
+    task = asyncio.create_task(call.run(_dial))
+    live: list[object] = []
+    async with asyncio.timeout(10):
+        while not task.done():
+            status = call.status()
+            if status["state"] == "live":
+                live.append(status["ended_by"])
+            await asyncio.sleep(0.001)
+    assert live
+    assert set(live) == {None}
+    assert call.status()["state"] == "ended"
+    assert call.status()["ended_by"] == "peer"
+    assert str(call.outcome()) == "ended by peer, 0 tool calls"

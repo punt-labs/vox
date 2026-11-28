@@ -62,6 +62,7 @@ class VoiceAgentCall:
         "_conversation_id",
         "_ended_by",
         "_error",
+        "_hung_up_by",
         "_notes",
         "_opener",
         "_progress",
@@ -86,6 +87,7 @@ class VoiceAgentCall:
     _connected: asyncio.Event
     _transcript: CallTranscript
     _tool_calls: list[dict[str, object]]  # Every one the call made, for the report.
+    _hung_up_by: CallEnd | None  # Published as ended_by once the call is ended.
     _notes: list[str]  # Device losses that came after the call had failed.
     _tools_answered: int  # Every one, for the end line; the history is capped.
 
@@ -111,6 +113,7 @@ class VoiceAgentCall:
         self._transcript = CallTranscript()
         self._tool_calls, self._tools_answered = [], 0
         self._notes = []
+        self._hung_up_by = None
         return self
 
     async def run(
@@ -150,12 +153,20 @@ class VoiceAgentCall:
     def _hang_up(self, ended_by: CallEnd) -> None:
         """End the call without failing; the agent's end_call stays who ended it."""
         self._state = "ended"
-        self._note_hang_up(ended_by)
-
-    def _note_hang_up(self, ended_by: CallEnd) -> None:
-        """Record who hung up; the call stays non-final until the reply plays out."""
         if self._ended_by is None:
             self._ended_by = ended_by
+
+    def _note_hang_up(self, ended_by: CallEnd) -> None:
+        """Keep who hung up private: a live call names nobody but the agent."""
+        if self._hung_up_by is None:
+            self._hung_up_by = ended_by
+
+    def _end(self) -> None:
+        """Settle a non-final call as ended, now naming who hung up."""
+        if self._state in {"connecting", "live"}:
+            self._state = "ended"
+            if self._ended_by is None:
+                self._ended_by = self._hung_up_by
 
     @staticmethod
     def _failure_text(failure: Exception) -> str:
@@ -191,12 +202,10 @@ class VoiceAgentCall:
         try:
             unplayed = await self._speaker.finish()
         except asyncio.CancelledError:
-            if self._state in {"connecting", "live"}:
-                self._state = "ended"
+            self._end()
             raise
         if unplayed is None:
-            if self._state in {"connecting", "live"}:
-                self._state = "ended"
+            self._end()
         elif self._state == "failed":
             self._notes.append(unplayed)  # the call's own failure stays the error
         else:
