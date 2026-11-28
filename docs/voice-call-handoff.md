@@ -371,7 +371,10 @@ agent closed the call)` and lists a never-discussed question as
   with vox call handoff --call-id <id>)`, which is not a handoff state, so the
   background exit never carries an unsealed handoff as if it were final. The
   plugin command tells the session to run that verb when it sees `unsealed`,
-  and only then to read the result as `complete` or `partial`.
+  and only then to read the result as `complete` or `partial`. While the call
+  task is still running, the verb waits up to 30 seconds for the seal; past
+  that it prints `handoff: collecting (the call has not ended)` and the
+  session tells the person so, rather than guessing.
 - The plugin command (`plugin/commands/call.md`) tells the session what to do
   with it: apply `answer` lines as the person's answers to its open
   questions and carry on; treat `decision` and `instruction` lines as the
@@ -494,7 +497,7 @@ with one initialisation, and this file holds several unrelated state schemas,
 so it fails at initialisation (`INITIALISATION FAILS`, `identifier_not_found`).
 Restructuring the existing schemas for ProB is outside this change. In its
 place I enumerated the lifted state machine by brute force (two questions,
-three notes, 2,690 reachable states). The script and its output are in the
+three notes, 5,812 reachable states). The script and its output are in the
 appendix below, so anyone can re-run it:
 every new and lifted operation is enabled in some reachable state, no
 operation is refused by the invariants except `SettleCallB` while
@@ -778,9 +781,9 @@ three notes, and checks the invariants after each step. It is not part of the
 repository; run it with `python3`. It printed:
 
 ```text
-reachable states: 2690
+reachable states: 5812
 initial state satisfies the invariants: True
-operations enabled somewhere: ['AgentEndCall', 'Connect', 'DeclineNoteB', 'End', 'EndFail', 'NoteDurable', 'ProvisionFail', 'ReceiveNoteB', 'ReplayNote', 'SealBriefed', 'SettleCallB', 'StartBriefed', 'StartPlain']
+operations enabled somewhere: ['AgentEndCall', 'Connect', 'DeclineNoteB', 'End', 'EndFail', 'HoldNoteB', 'NoteDurable', 'ProvisionFail', 'ReceiveNoteB', 'ReplayNote', 'SealBriefed', 'SettleCallB', 'StartBriefed', 'StartPlain']
 steps refused by an invariant other than seal-before-settle: 0
 deadlocks: 0
 every reachable state satisfies the invariants: True
@@ -789,13 +792,15 @@ complete implies agent-ended, resolved, nothing pending: True
 a failed call is never complete: True
 a briefed call is always tainted: True
 no seal while connecting or live: True
+a declined note is always a held one: True
 ```
 
 ```python
 """Exhaustive search of the Briefed state machine of docs/voice-call.tex.
 
-State: (call, settled, endedBy, handoff, tainted, asked, resolved, noted, pending).
-Two questions, three notes; every operation of the model is a step.
+State: (call, settled, endedBy, handoff, tainted, asked, resolved, noted,
+pending, held). Two questions, three notes; every operation of the model is
+a step.
 """
 
 from __future__ import annotations
@@ -803,23 +808,14 @@ from itertools import product
 
 Q = (1, 2)
 NOTES = (1, 2, 3)
-IDLE = (
-    "idle",
-    True,
-    "nobody",
-    "noBrief",
-    False,
-    frozenset(),
-    frozenset(),
-    frozenset(),
-    frozenset(),
-)
+E = frozenset()
+IDLE = ("idle", True, "nobody", "noBrief", False, E, E, E, E, E)
 
 
 def inv(s):
-    call, settled, by, h, taint, asked, res, noted, pend = s
-    ok = res <= asked and not (pend & noted)
-    ok &= h != "noBrief" or (not asked and not noted and not pend)
+    call, settled, by, h, taint, asked, res, noted, pend, held = s
+    ok = res <= asked and not (pend & noted) and held <= pend
+    ok &= h != "noBrief" or (not asked and not noted and not pend and not held)
     ok &= h == "noBrief" or taint
     ok &= call != "idle" or settled
     ok &= call not in ("connecting", "live") or not settled
@@ -843,46 +839,50 @@ def subsets(xs):
 
 
 def steps(s):
-    call, settled, by, h, taint, asked, res, noted, pend = s
+    call, settled, by, h, taint, asked, res, noted, pend, held = s
     out = []
-    E = frozenset()
     if call in ("idle", "ended", "failed") and settled:
         for qs in subsets(Q):
             out.append(
                 (
                     "StartBriefed",
-                    ("connecting", False, "nobody", "collecting", True, qs, E, E, E),
+                    ("connecting", False, "nobody", "collecting", True, qs, E, E, E, E),
                 )
             )
         out.append(
             (
                 "StartPlain",
-                ("connecting", False, "nobody", "noBrief", False, E, E, E, E),
+                ("connecting", False, "nobody", "noBrief", False, E, E, E, E, E),
             )
         )
     if call == "connecting":
         out.append(
-            ("Connect", ("live", settled, by, h, taint, asked, res, noted, pend))
+            ("Connect", ("live", settled, by, h, taint, asked, res, noted, pend, held))
         )
         out.append(
             (
                 "ProvisionFail",
-                ("failed", settled, "nobody", h, taint, asked, res, noted, pend),
+                ("failed", settled, "nobody", h, taint, asked, res, noted, pend, held),
             )
         )
     if call == "live" and by == "nobody":
         out.append(
             (
                 "AgentEndCall",
-                (call, settled, "byAgent", h, taint, asked, res, noted, pend),
+                (call, settled, "byAgent", h, taint, asked, res, noted, pend, held),
             )
         )
     if call in ("connecting", "live"):
         for who in ("byPeer", "byCaller"):
             e = by if by == "byAgent" else who
-            out.append(("End", ("ended", False, e, h, taint, asked, res, noted, pend)))
+            out.append(
+                ("End", ("ended", False, e, h, taint, asked, res, noted, pend, held))
+            )
         out.append(
-            ("EndFail", ("failed", False, "nobody", h, taint, asked, res, noted, pend))
+            (
+                "EndFail",
+                ("failed", False, "nobody", h, taint, asked, res, noted, pend, held),
+            )
         )
     if call == "live" and h == "collecting":
         for n in NOTES:
@@ -890,14 +890,44 @@ def steps(s):
                 out.append(
                     (
                         "ReceiveNoteB",
-                        (call, settled, by, h, taint, asked, res, noted, pend | {n}),
+                        (
+                            call,
+                            settled,
+                            by,
+                            h,
+                            taint,
+                            asked,
+                            res,
+                            noted,
+                            pend | {n},
+                            held,
+                        ),
                     )
                 )
-        for n in pend:
+        for n in pend - held:
+            # The gate holds an acting note on a tainted call for the person's yes.
+            out.append(
+                (
+                    "HoldNoteB",
+                    (call, settled, by, h, taint, asked, res, noted, pend, held | {n}),
+                )
+            )
+        for n in held:
             out.append(
                 (
                     "DeclineNoteB",
-                    (call, settled, by, h, taint, asked, res, noted, pend - {n}),
+                    (
+                        call,
+                        settled,
+                        by,
+                        h,
+                        taint,
+                        asked,
+                        res,
+                        noted,
+                        pend - {n},
+                        held - {n},
+                    ),
                 )
             )
         for n in noted:
@@ -906,8 +936,8 @@ def steps(s):
         for n in pend:
             for ans in subsets(asked):
                 if len(ans) <= 1:
-                    # acting notes need confirmed? when tainted: the step exists
-                    # only with confirmed? = true, so it is always enabled.
+                    # An acting note on a tainted call is recorded only after it
+                    # was held and confirmed; an open point is recorded unheld.
                     out.append(
                         (
                             "NoteDurable",
@@ -921,6 +951,7 @@ def steps(s):
                                 res | ans,
                                 noted | {n},
                                 pend - {n},
+                                held - {n},
                             ),
                         )
                     )
@@ -939,11 +970,14 @@ def steps(s):
                     res,
                     noted,
                     pend,
+                    held,
                 ),
             )
         )
     if call in ("ended", "failed") and not settled:
-        out.append(("SettleCallB", (call, True, by, h, taint, asked, res, noted, pend)))
+        out.append(
+            ("SettleCallB", (call, True, by, h, taint, asked, res, noted, pend, held))
+        )
     return out
 
 
@@ -987,9 +1021,17 @@ print(
     all(s[3] != "complete" for s in seen if s[0] == "failed"),
 )
 print("a briefed call is always tainted:", all(s[4] for s in seen if s[3] != "noBrief"))
-# The B1 hazard: a seal taken while the call is still live cannot happen.
 print(
     "no seal while connecting or live:",
     all(s[3] != "partial" or s[0] in ("ended", "failed") for s in seen),
+)
+print(
+    "a declined note is always a held one:",
+    all(
+        len(s[8] - t[8]) == 1 and (s[8] - t[8]) <= s[9]
+        for s in seen
+        for name, t in steps(s)
+        if name == "DeclineNoteB"
+    ),
 )
 ```

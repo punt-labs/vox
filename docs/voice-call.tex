@@ -636,12 +636,14 @@ one recorded item (an answer, decision, instruction or open point).
   handoff : HANDOFF \\
   tainted : ZBOOL \\
   asked, resolved : \power QUESTION \\
-  noted, pending : \power NOTE
+  noted, pending, held : \power NOTE
 \where
   resolved \subseteq asked \\
   pending \cap noted = \emptyset \\
+  held \subseteq pending \\
   handoff = noBrief \implies
-    (asked = \emptyset \land noted = \emptyset \land pending = \emptyset) \\
+    (asked = \emptyset \land noted = \emptyset \land pending = \emptyset
+      \land held = \emptyset) \\
   handoff \neq noBrief \implies tainted = ztrue
 \end{schema}
 
@@ -715,7 +717,8 @@ The handoff adds nine properties:
   asked' = \emptyset \\
   resolved' = \emptyset \\
   noted' = \emptyset \\
-  pending' = \emptyset
+  pending' = \emptyset \\
+  held' = \emptyset
 \end{schema}
 
 \begin{schema}{BeginHandoff}
@@ -727,7 +730,8 @@ The handoff adds nine properties:
   asked' = questions? \\
   resolved' = \emptyset \\
   noted' = \emptyset \\
-  pending' = \emptyset
+  pending' = \emptyset \\
+  held' = \emptyset
 \end{schema}
 
 \begin{schema}{BeginNoHandoff}
@@ -738,7 +742,8 @@ The handoff adds nine properties:
   asked' = \emptyset \\
   resolved' = \emptyset \\
   noted' = \emptyset \\
-  pending' = \emptyset
+  pending' = \emptyset \\
+  held' = \emptyset
 \end{schema}
 
 \begin{schema}{ReceiveNote}
@@ -750,6 +755,7 @@ The handoff adds nine properties:
   handoff = collecting \\
   note? \notin noted \cup pending \\
   pending' = pending \cup \{ note? \} \\
+  held' = held \\
   noted' = noted \\
   asked' = asked \\
   resolved' = resolved \\
@@ -774,9 +780,11 @@ recorded, it is still in \texttt{pending} when the handoff seals.
   handoff = collecting \\
   note? \in pending \\
   answers? \subseteq asked \\
-  (acting? = ztrue \land tainted = ztrue) \implies confirmed? = ztrue \\
+  (acting? = ztrue \land tainted = ztrue) \implies
+    (confirmed? = ztrue \land note? \in held) \\
   noted' = noted \cup \{ note? \} \\
   pending' = pending \setminus \{ note? \} \\
+  held' = held \setminus \{ note? \} \\
   resolved' = resolved \cup answers? \\
   asked' = asked \\
   handoff' = handoff \\
@@ -791,7 +799,7 @@ spoken yes to the daemon's read-back of it (H9). Only an open point is not
 acting. The daemon also checks an answer against the question and its offered
 options.
 
-\begin{schema}{DeclineNote}
+\begin{schema}{HoldNote}
   \Delta HandoffRecord \\
   Call \\
   note? : NOTE \\
@@ -799,8 +807,31 @@ options.
 \where
   call = live \\
   handoff = collecting \\
-  note? \in pending \\
+  note? \in pending \setminus held \\
   acting? = ztrue \land tainted = ztrue \\
+  held' = held \cup \{ note? \} \\
+  pending' = pending \\
+  noted' = noted \\
+  asked' = asked \\
+  resolved' = resolved \\
+  handoff' = handoff \\
+  tainted' = tainted
+\end{schema}
+
+\texttt{HoldNote} is the confirmation gate holding an acting note on a
+tainted call for the person's spoken yes: the note stays pending and is now
+also \texttt{held}. A note the gate has not seen, and an open point, is never
+held.
+
+\begin{schema}{DeclineNote}
+  \Delta HandoffRecord \\
+  Call \\
+  note? : NOTE
+\where
+  call = live \\
+  handoff = collecting \\
+  note? \in held \\
+  held' = held \setminus \{ note? \} \\
   pending' = pending \setminus \{ note? \} \\
   noted' = noted \\
   asked' = asked \\
@@ -810,12 +841,12 @@ options.
 \end{schema}
 
 \texttt{DeclineNote} is the person saying no to a held note, or the
-confirmation gate dropping it. Only an acting note on a tainted call is held
-by the gate, so only such a note can be declined; a note the gate has not
-seen, or an open point, is never discarded this way. The note leaves \texttt{pending} and is never
-recorded, so a replacement the person confirms is a new note and the declined
-one cannot make the handoff partial. A note still held when the call ends is
-not a decline: it stays pending and the handoff is partial (H6).
+confirmation gate dropping it. Only a held note can be declined, so a note
+still in flight, one the gate has not yet seen, is never discarded this way.
+The declined note leaves \texttt{pending} and is never recorded, so a
+replacement the person confirms is a new note and the declined one cannot
+make the handoff partial. A note still held when the call ends is not a
+decline: it stays pending and the handoff is partial (H6).
 
 \begin{schema}{SealHandoff}
   \Delta HandoffRecord \\
@@ -827,6 +858,7 @@ not a decline: it stays pending and the handoff is partial (H6).
   resolved' = resolved \\
   noted' = noted \\
   pending' = pending \\
+  held' = held \\
   tainted' = tainted \\
   (call = ended \land endedBy = byAgent \land asked \subseteq resolved
     \land pending = \emptyset) \implies handoff' = complete \\
@@ -854,6 +886,7 @@ start, receive or record a note, or seal.
   StartPlain \defs (Start \land BeginNoHandoff) \land \Delta Briefed \\
   ReceiveNoteB \defs (ReceiveNote \land \Xi Call) \land \Delta Briefed \\
   NoteDurable \defs (RunDurable \land NoteHandoff) \land \Delta Briefed \\
+  HoldNoteB \defs (HoldNote \land \Xi Call) \land \Delta Briefed \\
   DeclineNoteB \defs (DeclineNote \land \Xi Call) \land \Delta Briefed \\
   ReplayNote \defs Replay \land \Xi HandoffRecord \\
   SealBriefed \defs SealHandoff \land \Delta Briefed \\
