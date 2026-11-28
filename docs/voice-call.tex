@@ -794,11 +794,13 @@ options.
 \begin{schema}{DeclineNote}
   \Delta HandoffRecord \\
   Call \\
-  note? : NOTE
+  note? : NOTE \\
+  acting? : ZBOOL
 \where
   call = live \\
   handoff = collecting \\
   note? \in pending \\
+  acting? = ztrue \land tainted = ztrue \\
   pending' = pending \setminus \{ note? \} \\
   noted' = noted \\
   asked' = asked \\
@@ -808,7 +810,9 @@ options.
 \end{schema}
 
 \texttt{DeclineNote} is the person saying no to a held note, or the
-confirmation gate dropping it. The note leaves \texttt{pending} and is never
+confirmation gate dropping it. Only an acting note on a tainted call is held
+by the gate, so only such a note can be declined; a note the gate has not
+seen, or an open point, is never discarded this way. The note leaves \texttt{pending} and is never
 recorded, so a replacement the person confirms is a new note and the declined
 one cannot make the handoff partial. A note still held when the call ends is
 not a decline: it stays pending and the handoff is partial (H6).

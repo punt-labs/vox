@@ -155,9 +155,10 @@ When a brief is present, the prompt gains this section (proposed wording):
 > your own short words, reading any options by letter. After each answer, call
 > note_handoff with the person's own words. If the tool says the note is
 > recorded, say "got it" and move on. If it says the note is held for the
-> person's yes, read the note back in one short sentence, wait for their yes,
-> call note_handoff again with the same words, and only then say "got it" and
-> move on; if they say no, ask again. If
+> person's yes, say aloud exactly the read-back words the tool returned (the
+> daemon recognizes only its own wording, so never paraphrase them), wait for
+> their yes, call note_handoff again with the same words, and only then say
+> "got it" and move on; if they say no, ask again. If
 > they decide something or give an instruction that is not one of the
 > questions, note that too. If they want to postpone a question, note that as
 > deferred. When every question is answered or deferred, read the decisions
@@ -366,10 +367,11 @@ agent closed the call)` and lists a never-discussed question as
   call, until the handoff is sealed (the status reply's handoff state is no
   longer `collecting`), for at most 10 seconds after the terminal status. The
   seal follows the final state at once, so the wait is normally a few
-  milliseconds. Past the bound the command prints `handoff: partial (not
-  sealed in time)` and the session recovers the sealed handoff with
-  `vox call handoff --call-id`, so the background exit never carries an
-  unsealed handoff as if it were final.
+  milliseconds. Past the bound the command prints `handoff: unsealed (recover it
+  with vox call handoff --call-id <id>)`, which is not a handoff state, so the
+  background exit never carries an unsealed handoff as if it were final. The
+  plugin command tells the session to run that verb when it sees `unsealed`,
+  and only then to read the result as `complete` or `partial`.
 - The plugin command (`plugin/commands/call.md`) tells the session what to do
   with it: apply `answer` lines as the person's answers to its open
   questions and carry on; treat `decision` and `instruction` lines as the
@@ -445,7 +447,9 @@ Ctrl-C before the agent has ended it, the call's `ended by` is the person, so
 the handoff is `partial`: the agent's closing read-back never happened and the
 record has not been confirmed aloud. The cost is one sentence of extra caution
 in the session. If the person stops the call after the agent has already ended
-it, attribution stays with the agent (C12) and the handoff is `complete`.
+it, attribution stays with the agent (C12); the handoff is then `complete`
+when every question was also resolved and no note is pending (H4), and
+`partial` otherwise.
 Alternative: complete whenever every question is resolved, however the call
 ended. It reads better and makes a lagging or half-heard last note look
 confirmed, so it lost.
