@@ -35,8 +35,8 @@ canonical arguments; a durable key runs its operation at most once per call.
 
 A call started with a brief from a coding session also collects a
 handoff: the person's answers, decisions and instructions, noted while the
-call is live and sealed when it ends. The handoff section names eight more
-properties, H1 to H8, and leaves C1 to C12 as they are.
+call is live and sealed when it ends. The handoff section names nine more
+properties, H1 to H9, and leaves C1 to C12 as they are.
 
 The model names twelve call properties:
 
@@ -634,16 +634,26 @@ one recorded item (an answer, decision, instruction or open point).
 
 \begin{schema}{HandoffRecord}
   handoff : HANDOFF \\
+  tainted : ZBOOL \\
   asked, resolved : \power QUESTION \\
-  noted : \power NOTE
+  noted, pending : \power NOTE
 \where
   resolved \subseteq asked \\
-  handoff = noBrief \implies (asked = \emptyset \land noted = \emptyset)
+  pending \cap noted = \emptyset \\
+  handoff = noBrief \implies
+    (asked = \emptyset \land noted = \emptyset \land pending = \emptyset) \\
+  handoff \neq noBrief \implies tainted = ztrue
 \end{schema}
 
 \texttt{resolved} holds the questions the person answered or deferred
 aloud; a question never discussed stays in \texttt{asked} alone and the
-daemon lists it as unresolved when it seals.
+daemon lists it as unresolved when it seals. \texttt{pending} holds notes
+the agent has sent that are not recorded yet: in flight, or held for the
+person's spoken yes. \texttt{tainted} is the call's provenance flag
+(untrusted text has reached the conversation). A briefed call is tainted
+from its start, because the brief is written by a model that may have read
+untrusted text; the last predicate says so. The flag is modeled only for
+briefed calls.
 
 \begin{schema}{Briefed}
   Call \\
@@ -654,7 +664,8 @@ daemon lists it as unresolved when it seals.
   handoff \in \{ complete, partial \} \implies call \in \{ ended, failed \} \\
   settled = ztrue \implies handoff \neq collecting \\
   handoff = complete \implies
-    (call = ended \land endedBy = byAgent \land asked \subseteq resolved) \\
+    (call = ended \land endedBy = byAgent \land asked \subseteq resolved
+      \land pending = \emptyset) \\
   call = failed \implies handoff \neq complete
 \end{schema}
 
@@ -664,38 +675,47 @@ sealed is still \emph{collecting}, and the seal turns it partial. A terminal cal
 \texttt{settled = zfalse} between \texttt{End} and \texttt{SettleCall};
 the fourth predicate is why the seal comes first.
 
-The handoff adds eight properties:
+The handoff adds nine properties:
 
 \begin{enumerate}
   \item[H1] \emph{Starts as asked}: a call started with a brief begins
     \emph{collecting} with every question asked and nothing resolved or
     noted; a call started without one begins \emph{noBrief}, the call as
     before.
-  \item[H2] \emph{Notes only while live}: a note is accepted only on a live,
-    collecting call, and only against questions the brief asked.
+  \item[H2] \emph{Notes only while live}: a note is received and recorded
+    only on a live, collecting call, and only against questions the brief
+    asked.
   \item[H3] \emph{Sealed before settled}: no settled call is still
     collecting, so a status reply that shows a settled call shows a sealed
     handoff.
   \item[H4] \emph{Complete is earned}: a complete handoff means the agent
-    ended the call (C12) and every question was resolved.
+    ended the call (C12), every question was resolved and no note is still
+    pending. A brief with no questions is allowed; its handoff is complete
+    when the agent ends the call, and may hold no notes.
   \item[H5] \emph{Partial is stated}: a briefed call that ended without
     earning complete, or failed, is partial; a failed call is never
     complete.
   \item[H6] \emph{Notes survive the cut}: sealing keeps every note made
-    while the call was live, whatever ended it.
+    while the call was live, and every note still pending, whatever ended
+    the call.
   \item[H7] \emph{Durable once}: a re-asked note replays and adds no second
     note (C6).
   \item[H8] \emph{A sealed handoff stays}: nothing but the next
     \texttt{Start} changes a complete or partial handoff (C3).
+  \item[H9] \emph{Acting notes need a yes}: on a tainted call, a decision or
+    an instruction is recorded only after the person's spoken yes; every
+    briefed call is tainted, so this holds for the whole call.
 \end{enumerate}
 
 \begin{schema}{InitHandoff}
   HandoffRecord'
 \where
   handoff' = noBrief \\
+  tainted' = zfalse \\
   asked' = \emptyset \\
   resolved' = \emptyset \\
-  noted' = \emptyset
+  noted' = \emptyset \\
+  pending' = \emptyset
 \end{schema}
 
 \begin{schema}{BeginHandoff}
@@ -703,38 +723,72 @@ The handoff adds eight properties:
   questions? : \power QUESTION
 \where
   handoff' = collecting \\
+  tainted' = ztrue \\
   asked' = questions? \\
   resolved' = \emptyset \\
-  noted' = \emptyset
+  noted' = \emptyset \\
+  pending' = \emptyset
 \end{schema}
 
 \begin{schema}{BeginNoHandoff}
   \Delta HandoffRecord
 \where
   handoff' = noBrief \\
+  tainted' = zfalse \\
   asked' = \emptyset \\
   resolved' = \emptyset \\
-  noted' = \emptyset
+  noted' = \emptyset \\
+  pending' = \emptyset
 \end{schema}
+
+\begin{schema}{ReceiveNote}
+  \Delta HandoffRecord \\
+  Call \\
+  note? : NOTE
+\where
+  call = live \\
+  handoff = collecting \\
+  note? \notin noted \cup pending \\
+  pending' = pending \cup \{ note? \} \\
+  noted' = noted \\
+  asked' = asked \\
+  resolved' = resolved \\
+  handoff' = handoff \\
+  tainted' = tainted
+\end{schema}
+
+\texttt{ReceiveNote} is the daemon seeing the agent's \texttt{note\_handoff}
+call, before it is validated, gated or recorded. It happens in the call's
+listener as the tool call arrives, so a note the agent sent is never lost to
+the cancellation that follows a hang-up: if the call ends before the note is
+recorded, it is still in \texttt{pending} when the handoff seals.
 
 \begin{schema}{NoteHandoff}
   \Delta HandoffRecord \\
   Call \\
   note? : NOTE \\
-  answers? : \power QUESTION
+  answers? : \power QUESTION \\
+  acting?, confirmed? : ZBOOL
 \where
   call = live \\
   handoff = collecting \\
-  note? \notin noted \\
+  note? \in pending \\
   answers? \subseteq asked \\
+  (acting? = ztrue \land tainted = ztrue) \implies confirmed? = ztrue \\
   noted' = noted \cup \{ note? \} \\
+  pending' = pending \setminus \{ note? \} \\
   resolved' = resolved \cup answers? \\
   asked' = asked \\
-  handoff' = handoff
+  handoff' = handoff \\
+  tainted' = tainted
 \end{schema}
 
 \texttt{answers?} is the questions this note resolves: one for an answer
 or a deferral, none for a decision, an instruction or an open point.
+\texttt{acting?} marks a decision or an instruction; \texttt{confirmed?} is
+the person's spoken yes to the daemon's read-back of it (H9). An answer to
+an asked question is not acting: the daemon checks it against the question
+and its offered options.
 
 \begin{schema}{SealHandoff}
   \Delta HandoffRecord \\
@@ -745,24 +799,33 @@ or a deferral, none for a decision, an instruction or an open point.
   asked' = asked \\
   resolved' = resolved \\
   noted' = noted \\
-  (call = ended \land endedBy = byAgent \land asked \subseteq resolved)
-    \implies handoff' = complete \\
-  \lnot (call = ended \land endedBy = byAgent \land asked \subseteq resolved)
-    \implies handoff' = partial
+  pending' = pending \\
+  tainted' = tainted \\
+  (call = ended \land endedBy = byAgent \land asked \subseteq resolved
+    \land pending = \emptyset) \implies handoff' = complete \\
+  \lnot (call = ended \land endedBy = byAgent \land asked \subseteq resolved
+    \land pending = \emptyset) \implies handoff' = partial
 \end{schema}
 
-\texttt{SealHandoff} runs in the call task's settle step, after the call
-has ended or failed and before \texttt{SettleCall}. It frames
-\texttt{noted} and \texttt{resolved}, which is H6. A call cancelled
-before its task ran never dialed, so it seals partial with no notes.
+\texttt{SealHandoff} runs once the call has reached its final state, which
+is after the last reply has played out, so that \texttt{call} is
+\texttt{ended} or \texttt{failed} for good, and before
+\texttt{SettleCall}. In the implementation that is the launcher's task
+body after \texttt{call.run} returns or raises, not inside
+\texttt{call.run}: after a remote hang-up the play-out can still turn the
+call failed, and a seal taken before it could be \texttt{complete} for a
+call that then fails. A call cancelled before its task ran never dialed;
+the task's done callback seals it partial with no notes. The schema frames
+\texttt{noted}, \texttt{resolved} and \texttt{pending}, which is H6.
 
 The call operations above act on \texttt{Call}. In a briefed daemon each
-one is lifted by \texttt{HandoffRecord} unchanged, except the four that
-start, note, end-and-settle or seal.
+one is lifted by \texttt{HandoffRecord} unchanged, except the ones that
+start, receive or record a note, or seal.
 
 \begin{zed}
   StartBriefed \defs (Start \land BeginHandoff) \land \Delta Briefed \\
   StartPlain \defs (Start \land BeginNoHandoff) \land \Delta Briefed \\
+  ReceiveNoteB \defs (ReceiveNote \land \Xi Call) \land \Delta Briefed \\
   NoteDurable \defs (RunDurable \land NoteHandoff) \land \Delta Briefed \\
   ReplayNote \defs Replay \land \Xi HandoffRecord \\
   SealBriefed \defs SealHandoff \land \Delta Briefed \\
@@ -778,7 +841,7 @@ start, note, end-and-settle or seal.
 
 \texttt{SettleCallB} has an invariant-derived precondition: it applies
 only to a call whose handoff is not \emph{collecting} (H3), so the
-implementation must seal first. \texttt{StartBriefed} and
+implementation must seal first, after the final state. \texttt{StartBriefed} and
 \texttt{StartPlain} replace the previous call's sealed handoff; the
 previous handoff has been delivered in the status reply and the durable
 file by then. A named stop in the briefed state is
