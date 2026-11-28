@@ -351,7 +351,9 @@ jobs:
           key: ${{ steps.apt-prepare.outputs.key }}
       - id: sync
         run: uv sync --frozen --all-extras
-      - run: make coverage
+      - run: |
+          make install
+          uv run python tools/run_coverage.py --workers auto
       # Voice-call e2e: a real voxd subprocess dials a fake ElevenLabs agent
       # and fake REST on loopback with scripted PCM, no microphone and no
       # credentials. The coverage run above already collects this tier

@@ -385,8 +385,10 @@ ratchet-test breakdown and CPU-contention hypothesis do not establish the
 cause of the current runtime. Profile the current suite before attributing
 its cost to a particular component or to machine contention.
 
-`make test` and `make test-push` use four pytest-xdist workers by default.
-Override the count with `PYTEST_WORKERS`, for example `make test PYTEST_WORKERS=auto`.
+`make test`, `make test-push`, `make test-changed`, and `make coverage` use four
+pytest-xdist workers by default. `make check` uses the same setting through
+`make test`. Override the count with `PYTEST_WORKERS`, for example
+`make coverage PYTEST_WORKERS=auto` to use one worker per core.
 
 ## The MP3 Problem
 
