@@ -23,7 +23,12 @@ class TmuxProbe:
             return False
         error = result.stderr.strip()
         if error.startswith(
-            ("can't find session:", "no such session", "no server running on ")
+            (
+                "can't find session:",
+                "no such session",
+                "no server running on ",
+                "server exited unexpectedly",  # it shut down as the client connected
+            )
         ):
             return True
         if error.startswith("error connecting to ") and error.endswith(
