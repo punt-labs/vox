@@ -621,3 +621,29 @@ def test_stop_treats_a_session_vanishing_mid_stop_as_finished(
     ):
         TmuxWorkerProvider().stop("worker")
     assert finish.call_count == (1 if vanishes_at == "kill" else 0)
+
+
+def test_stop_treats_a_server_that_exits_during_has_session_as_a_finished_stop() -> (
+    None
+):
+    """tmux shuts down after its last session ends; the probe can lose that race."""
+    with patch.object(
+        TmuxWorkerProvider,
+        "_run",
+        side_effect=[
+            subprocess.CompletedProcess([], 1, "", "server exited unexpectedly\n")
+        ],
+    ) as run:
+        TmuxWorkerProvider().stop("vox-gone")
+    assert run.call_count == 1  # no pane read, no kill: the session is gone
+
+
+def test_a_server_that_exits_during_has_session_is_not_a_live_session() -> None:
+    with patch.object(
+        TmuxWorkerProvider,
+        "_run",
+        side_effect=[
+            subprocess.CompletedProcess([], 1, "", "server exited unexpectedly\n")
+        ],
+    ):
+        assert TmuxWorkerProvider().status("vox-gone") is False

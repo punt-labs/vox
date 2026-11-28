@@ -109,6 +109,14 @@ class TmuxWorkerProvider:
                 TmuxProbe.missing(sessions)
                 or handle not in sessions.stdout.splitlines()
             )
+        if (
+            result.returncode != 0
+            and result.stderr.strip() == "server exited unexpectedly"
+        ):
+            # has-session lost the race with the server shutting down after its
+            # last session ended: the session is gone. A kill that reports the
+            # same text stays a failure (see _ended).
+            return True
         return TmuxProbe.missing(result)
 
     def stop(self, handle: str) -> None:
