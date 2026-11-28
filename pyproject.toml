@@ -107,7 +107,7 @@ voxd = "punt_vox.voxd:entrypoint"
 vox-panel = "punt_vox.panel.applet:app"
 
 [dependency-groups]
-roundtrip = ["faster-whisper==1.2.1", "av<19"]
+roundtrip = ["faster-whisper==1.2.1", "av<20"]
 
 dev = [
     "pydoclint==0.12.0",
