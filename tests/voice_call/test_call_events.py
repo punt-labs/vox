@@ -1,22 +1,26 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import io
 import json
 import logging
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, cast
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Literal, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
+from punt_vox.voxd.pcm_output import OutputDeviceLostError
 from punt_vox.voxd.voice_agent import Conversation
 from punt_vox.voxd.voice_agent.contracts import SessionOptions
 from punt_vox.voxd.voice_agent.events import (
     AgentResponse,
     AgentResponseCorrection,
     AgentToolResponse,
+    Audio,
     ClientToolCall,
     Metadata,
     Ping,
@@ -30,7 +34,7 @@ from punt_vox.voxd.voice_call.mic_input import MicInput
 from punt_vox.voxd.voice_call.progress import ProgressEvents
 from punt_vox.voxd.voice_call.speaker import AgentSpeaker
 
-from .fakes import FakePlayback, FakeWorkers, payload
+from .fakes import FakePlayback, FakeWorkers, LatePlayback, payload
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, AsyncIterator
@@ -293,6 +297,28 @@ async def test_a_live_call_logs_its_conversation_id(
     assert "Call live: conversation conv_1" in [r.message for r in caplog.records]
 
 
+async def test_only_a_tool_call_inside_a_turn_begins_an_utterance() -> None:
+    """The order of call-cac9b0c7: tool call, audio, agent_response, more audio.
+
+    The agent_response lands in the audio that resumes after the tool pause,
+    where the buffer is shallow: marking it would turn a stall into a pause.
+    """
+    playback = FakePlayback()
+    peer = _Peer(
+        [
+            Audio(b"a", 79),
+            ClientToolCall("t1", "list_workers", {}, expects_response=False),
+            Audio(b"b", 79),
+            Audio(b"c", 79),
+            AgentResponse("and then", 79, "r2"),
+            Audio(b"d", 79),
+        ]
+    )
+    speaker = AgentSpeaker(cast("PlaybackQueue", playback))
+    await _call(peer, speaker=speaker).run(_dial)
+    assert playback.sinks[0].starts == [True, True, False, False]
+
+
 async def test_each_tool_call_is_logged_with_its_outcome(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -415,6 +441,68 @@ async def test_the_outcome_counts_every_tool_call() -> None:
 
 
 _END_CALL = AgentToolResponse("end_1", False, "end_call", "system")
+
+
+async def test_a_peer_close_that_meets_another_fault_still_fails_the_call() -> None:
+    """The group holds an EOFError and an ordinary error: the failure stands."""
+
+    class _ResettingPeer(_Peer):
+        async def send_audio(self, pcm: bytes) -> None:
+            del pcm
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:  # the socket breaks as the peer closes
+                msg = "connection reset"
+                raise OSError(msg) from None
+
+    call = _call(_ResettingPeer([]), audio=_OneChunk())
+    await call.run(_dial)
+    status = call.status()
+    assert status["state"] == "failed"
+    assert "connection reset" in str(status["error"])
+    assert status["ended_by"] is None
+
+
+async def test_a_group_of_a_peer_close_and_a_send_fault_fails_the_call() -> None:
+    """A tool answer still sending when the peer closes: both reach the group."""
+
+    async def dial() -> tuple[str, SessionOptions]:
+        msg = "send failed"
+        raise ExceptionGroup("tasks", [EOFError(), ConvAIError(msg)])
+
+    call = _call(_Peer([]))
+    await call.run(dial)
+    status = call.status()
+    assert (status["state"], status["error"]) == ("failed", "send failed")
+    assert status["ended_by"] is None
+
+
+async def test_a_release_error_during_play_out_is_never_seen_as_ended() -> None:
+    """A client stops following at "ended": a failing release must not show it."""
+
+    class _BrokenSpeaker:
+        notes: tuple[str, ...] = ()
+
+        async def play(self, audio: Audio) -> None:
+            del audio
+
+        def note_tool_call(self) -> None:
+            pass
+
+        async def interrupt(self, event_id: int) -> None:
+            del event_id
+
+        async def close(self) -> None:
+            pass
+
+        async def finish(self) -> str | None:
+            msg = "PortAudio release failed"
+            raise RuntimeError(msg)
+
+    call = _call(_Peer([]), speaker=cast("AgentSpeaker", _BrokenSpeaker()))
+    with pytest.raises(RuntimeError, match="release failed"):
+        await call.run(_dial)
+    assert call.status()["state"] in {"connecting", "live"}
 
 
 async def test_a_failure_after_the_agents_end_call_is_nobodys_hang_up() -> None:
@@ -715,3 +803,208 @@ async def test_the_status_keeps_every_tool_call_the_call_made() -> None:
         )
     shown = cast("list[dict[str, object]]", call.status()["tool_calls"])
     assert len(shown) == 25
+
+
+class _ScriptedSpeaker:
+    """A speaker whose finish() returns text, raises, or blocks like a reply playing."""
+
+    def __init__(
+        self,
+        result: str | None = None,
+        error: BaseException | None = None,
+        *,
+        blocks: bool = False,
+        pause_s: float = 0.0,
+    ) -> None:
+        self.notes: tuple[str, ...] = ()
+        self.started = asyncio.Event()
+        self._result, self._error, self._blocks = result, error, blocks
+        self._pause_s = pause_s
+
+    async def play(self, audio: Audio) -> None:
+        del audio
+
+    def note_tool_call(self) -> None:
+        pass
+
+    async def interrupt(self, event_id: int) -> None:
+        del event_id
+
+    async def close(self) -> None:
+        pass
+
+    async def finish(self) -> str | None:
+        self.started.set()
+        if self._blocks:
+            await asyncio.sleep(10)
+        await asyncio.sleep(self._pause_s)
+        if self._error is not None:
+            raise self._error
+        return self._result
+
+
+class _HangingPeer(_Peer):
+    async def receive(self) -> object:
+        await asyncio.sleep(10)
+        raise EOFError
+
+
+async def _group_dial(*errors: Exception) -> tuple[str, SessionOptions]:
+    raise ExceptionGroup("tasks", list(errors))
+
+
+@dataclass(frozen=True)
+class _Ending:
+    """One way a call ends, and the final status every client must read."""
+
+    peer: _Peer
+    speaker: _ScriptedSpeaker | AgentSpeaker
+    state: Literal["ended", "failed"]
+    ended_by: str | None
+    error: str | None = None  # Text the failure must contain; None: no error.
+    note: str | None = None  # Text a status note must contain.
+    faults: tuple[Exception, ...] = ()  # Raised together from the dial.
+    cancel: Literal["", "live", "play_out"] = ""  # call_stop at that moment.
+
+
+def _reply_peer() -> _Peer:
+    return _Peer([Audio(b"\x01\x00" * 8, 1)])
+
+
+_ENDINGS = {
+    "caller hang-up": _Ending(
+        _HangingPeer([]), _ScriptedSpeaker(), "ended", "caller", cancel="live"
+    ),
+    "remote hang-up, clean finish": _Ending(
+        _Peer([]), _ScriptedSpeaker(), "ended", "peer"
+    ),
+    "remote hang-up, finish returns text": _Ending(
+        _Peer([]), _ScriptedSpeaker("device gone"), "failed", None, error="device gone"
+    ),
+    "finish raises an ordinary error": _Ending(
+        _Peer([]),
+        _ScriptedSpeaker(error=RuntimeError("release failed")),
+        "failed",
+        None,
+        error="release failed",
+    ),
+    "finish raises a device stop": _Ending(
+        _Peer([]),
+        _ScriptedSpeaker(error=OutputDeviceLostError("device stopped")),
+        "failed",
+        None,
+        error="device stopped",
+    ),
+    "call_stop during play-out": _Ending(
+        _Peer([]), _ScriptedSpeaker(blocks=True), "ended", "peer", cancel="play_out"
+    ),
+    "agent end_call close, clean": _Ending(
+        _Peer([_END_CALL]), _ScriptedSpeaker(), "ended", "agent"
+    ),
+    "agent end_call close, call_stop during play-out": _Ending(
+        _Peer([_END_CALL]),
+        _ScriptedSpeaker(blocks=True),
+        "ended",
+        "agent",
+        cancel="play_out",
+    ),
+    "EOFError with a ConvAIError": _Ending(
+        _Peer([]),
+        _ScriptedSpeaker(),
+        "failed",
+        None,
+        error="send failed",
+        faults=(EOFError(), ConvAIError("send failed")),
+    ),
+    "EOFError with an ordinary error": _Ending(
+        _Peer([]),
+        _ScriptedSpeaker(),
+        "failed",
+        None,
+        error="connection reset",
+        faults=(EOFError(), OSError("connection reset")),
+    ),
+    "late device confirmation": _Ending(
+        _reply_peer(),
+        AgentSpeaker(cast("PlaybackQueue", LatePlayback())),
+        "ended",
+        "peer",
+        note="did not confirm",
+    ),
+    "already failed, then finish returns text": _Ending(
+        _Peer([]),
+        _ScriptedSpeaker("device gone"),
+        "failed",
+        None,
+        error="connection reset",
+        note="device gone",
+        faults=(EOFError(), OSError("connection reset")),
+    ),
+}
+
+
+@pytest.mark.parametrize("ending", _ENDINGS.values(), ids=list(_ENDINGS))
+async def test_every_way_a_call_ends_settles_it_once(ending: _Ending) -> None:
+    """Once run() and the launcher return, the call is final and consistent."""
+    call = _call(ending.peer, speaker=cast("AgentSpeaker", ending.speaker))
+    states: list[str] = []
+    live_ended_by: list[object] = []  # ended_by read while the call is non-final
+
+    async def launched() -> None:
+        try:  # What the launcher does around call.run.
+            await call.run(
+                (lambda: _group_dial(*ending.faults)) if ending.faults else _dial
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            call.mark_failed(str(exc) or type(exc).__name__)
+
+    async def poll() -> None:
+        while True:
+            status = call.status()
+            states.append(cast("str", status["state"]))
+            if status["state"] in {"connecting", "live"}:
+                live_ended_by.append(status["ended_by"])
+            await asyncio.sleep(0.001)
+
+    task, poller = asyncio.create_task(launched()), asyncio.create_task(poll())
+    async with asyncio.timeout(10):
+        if ending.cancel == "live":
+            while call.status()["state"] != "live":
+                await asyncio.sleep(0.001)
+            task.cancel()
+        elif ending.cancel == "play_out":
+            await cast("_ScriptedSpeaker", ending.speaker).started.wait()
+            task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+    poller.cancel()
+    status = call.status()
+    assert status["state"] == ending.state
+    assert status["ended_by"] == ending.ended_by
+    if ending.state == "failed":
+        assert ending.error is not None
+        assert ending.error in str(status["error"])
+    else:
+        assert status["error"] is None
+    notes = cast("list[str]", status["notes"])
+    assert (ending.note is None) or any(ending.note in n for n in notes)
+    assert not ("ended" in states and "failed" in states[states.index("ended") :])
+    assert set(live_ended_by) <= {None, "agent"}  # a hang-up is nobody's until final
+
+
+async def test_a_remote_hang_up_is_nobodys_until_the_reply_has_played_out() -> None:
+    """docs/voice-call.tex: live implies ended_by is nobody or the agent."""
+    call = _call(_Peer([]), speaker=cast("AgentSpeaker", _ScriptedSpeaker(pause_s=0.1)))
+    task = asyncio.create_task(call.run(_dial))
+    live: list[object] = []
+    async with asyncio.timeout(10):
+        while not task.done():
+            status = call.status()
+            if status["state"] == "live":
+                live.append(status["ended_by"])
+            await asyncio.sleep(0.001)
+    assert live
+    assert set(live) == {None}
+    assert call.status()["state"] == "ended"
+    assert call.status()["ended_by"] == "peer"
+    assert str(call.outcome()) == "ended by peer, 0 tool calls"

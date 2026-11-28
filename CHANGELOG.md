@@ -16,6 +16,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The voice-call speaker no longer clicks when agent audio runs dry
+  mid-utterance, when the caller barges in (the fade now sounds before the
+  device is released), or when a response ends. The daemon fades the last
+  samples to zero over 3 ms at a cut and blends the first 3 ms back in when
+  audio resumes, with no added latency; audio that never runs dry plays
+  unchanged. The `PCM stream closed` log line counts underflows only when the
+  same utterance resumed after a silence (with total and longest gap at any
+  length), counts pauses at tool calls and between utterances as `idle_gaps`,
+  and shows the silence a stream ended in as `trailing_gap`; before, it counted
+  every silent 20 ms block and read in the thousands on a long call. A hang-up
+  or barge-in no longer waits on a stalled audio device, and a cancelled close
+  still releases it. Call status now tells an operator what happened to the
+  last reply: after a remote hang-up the call stays `live` until the reply has
+  played out and then settles once, to `ended` or `failed`; a device that
+  stopped or stalled fails the call and names the cause; a device that only
+  confirmed late, or was lost before a barge-in or a caller hang-up, adds a
+  non-fatal `note` that `vox call` prints as a `note:` line. (PL-1757)
+
 - The voice agent's `worker_status` tool now says what a worker is doing from
   the hook events voxd already collects: a state (`working`, `blocked`,
   `idle`, `finished`), the tool in flight, the files being touched, an open

@@ -62,6 +62,8 @@ class VoiceAgentCall:
         "_conversation_id",
         "_ended_by",
         "_error",
+        "_hung_up_by",
+        "_notes",
         "_opener",
         "_progress",
         "_speaker",
@@ -85,6 +87,8 @@ class VoiceAgentCall:
     _connected: asyncio.Event
     _transcript: CallTranscript
     _tool_calls: list[dict[str, object]]  # Every one the call made, for the report.
+    _hung_up_by: CallEnd | None  # Published as ended_by once the call is ended.
+    _notes: list[str]  # Device losses that came after the call had failed.
     _tools_answered: int  # Every one, for the end line; the history is capped.
 
     def __new__(
@@ -108,6 +112,8 @@ class VoiceAgentCall:
         self._connected = asyncio.Event()
         self._transcript = CallTranscript()
         self._tool_calls, self._tools_answered = [], 0
+        self._notes = []
+        self._hung_up_by = None
         return self
 
     async def run(
@@ -123,7 +129,7 @@ class VoiceAgentCall:
             async with self._progress.subscribe() as queue:
                 await self._converse(dial, queue, covered)
         except* EOFError:
-            self._hang_up(CallEnd.PEER)
+            self._note_hang_up(CallEnd.PEER)
             hung_up = True
         except* ConvAIError as faults:
             # After the agent's end_call the provider closes the conversation;
@@ -131,7 +137,7 @@ class VoiceAgentCall:
             if self._ended_by is CallEnd.AGENT:
                 details = [str(fault) for fault in faults.exceptions]
                 self._trace.record("note", "agent_end_close", {"faults": details})
-                self._hang_up(CallEnd.AGENT)
+                self._note_hang_up(CallEnd.AGENT)
                 hung_up = True
             else:
                 self.mark_failed(self._failure_text(faults.exceptions[0]))
@@ -150,6 +156,18 @@ class VoiceAgentCall:
         if self._ended_by is None:
             self._ended_by = ended_by
 
+    def _note_hang_up(self, ended_by: CallEnd) -> None:
+        """Keep who hung up private: a live call names nobody but the agent."""
+        if self._hung_up_by is None:
+            self._hung_up_by = ended_by
+
+    def _end(self) -> None:
+        """Settle a non-final call as ended, now naming who hung up."""
+        if self._state in {"connecting", "live"}:
+            self._state = "ended"
+            if self._ended_by is None:
+                self._ended_by = self._hung_up_by
+
     @staticmethod
     def _failure_text(failure: Exception) -> str:
         # Notes carry what cleanup could not do, so the caller must see them.
@@ -162,7 +180,7 @@ class VoiceAgentCall:
         hung_up: bool,
     ) -> None:
         """End the call: release the speaker, then depart, then play out a hang-up."""
-        if self._state in {"connecting", "live"}:
+        if not hung_up and self._state in {"connecting", "live"}:
             self._hang_up(CallEnd.CALLER)
         self._connected.set()
         try:
@@ -174,7 +192,24 @@ class VoiceAgentCall:
                     await depart(self._progress.reported)
             finally:
                 if hung_up:
-                    await self._speaker.finish()
+                    await self._play_out()
+
+    async def _play_out(self) -> None:
+        """Let the last reply finish, then settle the call: ended, or failed."""
+        # An error from finish() leaves the call non-final: only the launcher
+        # settles it, so no client sees "ended" before "failed". A stop is not
+        # an error: nobody settles a cancelled task, so it ends the call here.
+        try:
+            unplayed = await self._speaker.finish()
+        except asyncio.CancelledError:
+            self._end()
+            raise
+        if unplayed is None:
+            self._end()
+        elif self._state == "failed":
+            self._notes.append(unplayed)  # the call's own failure stays the error
+        else:
+            self.mark_failed(unplayed)
 
     async def _converse(
         self,
@@ -222,6 +257,7 @@ class VoiceAgentCall:
             "state": self._state,
             "conversation_id": self._conversation_id,
             "error": self._error,
+            "notes": [*self._speaker.notes, *self._notes],
             "ended_by": None if self._ended_by is None else self._ended_by.value,
             "replayed_tool_calls": self._tools.replayed,
             "transcript": self._transcript.turns(),
@@ -266,20 +302,23 @@ class VoiceAgentCall:
                 case Interruption(event_id=event_id):
                     await self._speaker.interrupt(event_id)
                 case ClientToolCall() as call:
+                    self._speaker.note_tool_call()
                     group.create_task(self._answer(conv, call))
                 case UserTranscript() as turn:
                     self._progress.activity()
                     self._transcript.record(turn)
                     self._tools.guard.gate.heard(turn.text)
                 case AgentResponse() | AgentResponseCorrection() as turn:
-                    self._transcript.record(turn)
-                    self._tools.guard.gate.agent_spoke(
-                        turn.text
-                        if isinstance(turn, AgentResponse)
-                        else turn.corrected_text
-                    )
+                    self._heard_agent(turn)
                 case AgentToolResponse() as ack:
                     self._acknowledged(ack)
+
+    def _heard_agent(self, turn: AgentResponse | AgentResponseCorrection) -> None:
+        """Record what the agent said."""
+        self._transcript.record(turn)
+        self._tools.guard.gate.agent_spoke(
+            turn.text if isinstance(turn, AgentResponse) else turn.corrected_text
+        )
 
     def _acknowledged(self, ack: AgentToolResponse) -> None:
         """Taint on a tool voxd did not run; note end_call, the agent's hang-up."""

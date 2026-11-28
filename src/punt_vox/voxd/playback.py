@@ -156,7 +156,9 @@ class PlaybackQueue:
         as they wait behind a file. ``locked`` means the caller already holds
         the mutex: a voice call keeps it across replies and opens one stream
         per reply. The device is released on exit whether the utterance
-        played out, was flushed, or the caller raised.
+        played out, was flushed, or the caller raised. A natural end the
+        device never confirmed raises :class:`OutputDeviceLostError` after
+        the release; a flush or a caller's own error never does.
 
         The stream opens on the device table's current defaults and is
         counted on the table while open.
@@ -169,8 +171,17 @@ class PlaybackQueue:
             await sink.open(CountedOutput(self._output_stream, self._table))
             try:
                 yield sink
-            finally:
-                await sink.close()
+            except BaseException as caller_error:
+                # Releasing must not hide why the caller left.
+                try:
+                    await sink.close()
+                except Exception as release_error:
+                    logger.exception("releasing the PCM device after a caller error")
+                    caller_error.add_note(
+                        f"releasing the PCM device failed: {release_error!r}"
+                    )
+                raise
+            (await sink.close()).check_played_out()
 
     def set_last_result(self, value: PlaybackResult | None) -> None:
         """Set the last playback result. Used by delegation and tests."""

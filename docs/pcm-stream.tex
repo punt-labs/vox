@@ -25,7 +25,7 @@ an ElevenLabs \texttt{interruption}, and closes the sink; the device thread
 pulls 20~ms blocks. Pending audio lives in one locked buffer, so each feed,
 pull and flush is atomic and the operations below interleave in any order.
 
-The model counts bytes. It names five properties, and the tests carry the
+The model counts bytes. It names nine properties, and the tests carry the
 same names:
 
 \begin{enumerate}
@@ -37,9 +37,22 @@ same names:
     a closed sink.
   \item[P4] \emph{Stop is idempotent}: a flush after a flush, a close or a
     play-out changes nothing.
-  \item[P5] \emph{Play-out drains}: close lets the device play its last block
-    only when the response finished and nothing is pending; otherwise it
-    aborts.
+  \item[P5] \emph{Play-out drains, or is abandoned}: close stops the device
+    (which then plays what it holds) only after the device said it played the
+    finished or flushed stream out; a device that did not say so within a
+    bound is marked lost and aborted, never waited on.
+  \item[P6] \emph{A dry spell opens only on a streaming sink that already
+    played audio}: silence before the first audio, or after the response
+    finished or was flushed, is not a dry spell.
+  \item[P7] \emph{Shaping moves no byte}: the fades change sample values,
+    never \emph{fed}, \emph{played}, \emph{dropped} or \emph{pending}; every
+    operation on a spell is $\Xi$ on \emph{Sink}.
+  \item[P8] \emph{Starvation is lateness, not length}: a spell that ends
+    with audio of the same utterance is starvation at any length; a spell that
+    ends where a marked utterance begins is a pause; a spell the stream ends in
+    is neither, and its length is kept.
+  \item[P9] \emph{A mark is queued before its audio}: the device thread never
+    pulls audio whose mark the loop has not yet recorded.
 \end{enumerate}
 
 \section{Types}
@@ -122,11 +135,12 @@ can leave, so the stream can still play out.
   phase' = finished \\
   fed' = fed \\
   played' = played \\
-  pending' = 0 \implies drained' = ztrue \\
-  pending' \neq 0 \implies drained' = drained
+  drained' = drained
 \end{schema}
 
-A response that ends with nothing left to play is played out at once.
+\texttt{Finish} never marks the stream drained, even with nothing pending: a
+device callback may hold the final block, pulled but not yet shaped, so only
+the callback that shaped it (\texttt{Drain}) says the audio is played out.
 
 \begin{schema}{Flush}
   \Delta Sink
@@ -151,11 +165,17 @@ A response that ends with nothing left to play is played out at once.
 
 \begin{schema}{Close}
   \Delta Sink \\
-  drain! : ZBOOL
+  playedOut? : ZBOOL \\
+  drain!, lost! : ZBOOL
 \where
   phase \neq closed \\
-  (phase = finished \land pending = 0) \implies drain! = ztrue \\
-  \lnot (phase = finished \land pending = 0) \implies drain! = zfalse \\
+  playedOut? = ztrue \implies drained = ztrue \\
+  drain! = ztrue \iff
+    ((phase = interrupted \lor (phase = finished \land drained = ztrue))
+      \land playedOut? = ztrue) \\
+  lost! = ztrue \iff
+    ((phase = interrupted \lor (phase = finished \land drained = ztrue))
+      \land playedOut? = zfalse) \\
   dropped' = dropped + pending \\
   pending' = 0 \\
   phase' = closed \\
@@ -164,8 +184,15 @@ A response that ends with nothing left to play is played out at once.
   drained' = drained
 \end{schema}
 
-\texttt{drain!} is P5: \texttt{ztrue} stops the device after its last block,
-\texttt{zfalse} aborts it.
+\texttt{playedOut?} is the device's own report (PortAudio's
+\texttt{finished\_callback}, after the callback ended the stream with
+\texttt{StreamCompleted}) arriving within the bound; it can only be true once
+the stream is drained. \texttt{drain!} is P5: \texttt{ztrue} stops the
+device, which is then instant; \texttt{zfalse} aborts it, which does not wait
+on the device. A flushed or drained stream the device did not report played
+out is also \emph{lost!}: the report is degraded. A report is owed only
+once the stream ended (interrupted, or finished and drained): a finished
+stream closed before it drained is a teardown, and aborts without being lost.
 
 \section{Operations on the device thread}
 
@@ -200,11 +227,187 @@ never has: the operational half of P2.
   pending' = pending
 \end{schema}
 
-\texttt{Drain} is the callback finding the buffer empty after
-\texttt{Finish}; it releases waiters. The callback reads the phase without
+\texttt{Drain} is the callback that shaped the last block and its fade-out
+finding the buffer empty after \texttt{Finish} or \texttt{Flush}; it ends the
+stream with \texttt{StreamCompleted} and releases waiters. The callback reads the phase without
 the loop's cooperation, so a \texttt{Flush} may land between that read and
 the drain: \texttt{Drain} is therefore allowed from \texttt{interrupted}
 too. Nothing is pending in either case, so the two orders end in the same
 counts; only the report's \texttt{interrupted} flag differs.
+
+The callback pulls before it reads the phase, so a short pull can precede a
+final \texttt{Feed} and \texttt{Finish}. The code therefore looks at the
+buffer again after it reads \texttt{finished}: nothing can be fed after that
+phase, and a non-empty buffer means the next callback pulls the rest, which is
+what \texttt{pending = 0} above requires.
+
+\section{Dry spells}
+
+A dry spell is the buffer running empty while audio was playing and the
+utterance was still arriving. The device thread fades the last sample down to
+zero (a 3~ms tail), plays silence, and fades the first samples of resumed
+audio up from where the tail had got to. The same tail follows a flush or the
+end of the response. The fades add no phase to the sink: they are the
+sample-level shape of the steps below. What the model adds is the spell's own
+state, so that the counts and the length the report carries are defined.
+
+The call's stream stays open between the agent's turns and across its tool
+calls, so the sink cannot tell a pause from a stall by itself. The caller
+marks the stream offset where each new utterance begins: the first chunk of a
+turn (its audio \texttt{event\_id} differs from the previous chunk's) and the
+first chunk after a client tool call. An \texttt{agent\_response} is not a
+mark: in the real call traces it carries no information the turn id and the
+tool call do not already give.
+A mark is a byte offset rounded down to a frame; \emph{marks} is the set of
+marks the device has not yet pulled past.
+
+\begin{schema}{Spells}
+  open : ZBOOL \\
+  missing, starved, idle, silence, trailing : \nat \\
+  marks : \finset \nat
+\where
+  open = zfalse \implies missing = 0
+\end{schema}
+
+\emph{silence} is the total length of the starvations, \emph{missing} the
+length of the open spell, and \emph{trailing} the length of the spell the
+stream ended in.
+
+\begin{schema}{InitSpells}
+  Spells'
+\where
+  open' = zfalse \\
+  missing' = 0 \\
+  starved' = 0 \\
+  idle' = 0 \\
+  silence' = 0 \\
+  trailing' = 0 \\
+  marks' = \emptyset
+\end{schema}
+
+\begin{schema}{Observed}
+  Sink \\
+  Spells
+\where
+  open = ztrue \implies played > 0 \\
+  \forall m : marks @ m \geq played
+\end{schema}
+
+The first predicate of \texttt{Observed} is P6: a spell is open only on a
+sink that has played audio. The second says no mark lies behind the device:
+each is dropped in the block that pulls it.
+
+The loop notes a mark at the offset of the next byte it feeds, always before
+it queues those bytes (P9: in the model, \texttt{NoteBoundary} happens before
+the \texttt{Feed} it describes, and a \texttt{Pull} sees whatever
+\texttt{Feed} had queued, so it sees the mark).
+
+\begin{schema}{NoteBoundary}
+  \Xi Sink \\
+  \Delta Spells
+\where
+  marks' = marks \cup \{ fed \} \\
+  open' = open \\
+  missing' = missing \\
+  starved' = starved \\
+  idle' = idle \\
+  silence' = silence \\
+  trailing' = trailing
+\end{schema}
+
+The device pulls a block. The marks it passes are dropped; \emph{boundary!}
+says whether one lies at the first byte pulled. A spell opens where the
+previous audio ended, which is where this block begins, so only a mark there
+says the audio that resumes is a new utterance: a later mark in the block
+begins one after it, and an earlier one belongs to audio already pulled.
+
+\begin{schema}{PullMarks}
+  \Delta Sink \\
+  \Delta Spells \\
+  boundary! : ZBOOL
+\where
+  marks' = \{ m : marks | m \geq played' \} \\
+  boundary! = ztrue \iff played \in marks \\
+  open' = open \\
+  missing' = missing \\
+  starved' = starved \\
+  idle' = idle \\
+  silence' = silence \\
+  trailing' = trailing
+\end{schema}
+
+\begin{zed}
+  PullAudio \defs Pull \land PullMarks
+\end{zed}
+
+A callback that comes up short extends the open spell, or opens one. The
+code pulls whole frames, so a half sample may stay pending: \emph{pending}
+is at most one byte.
+
+\begin{schema}{Starve}
+  \Xi Sink \\
+  \Delta Spells \\
+  k? : \nat_1
+\where
+  phase = streaming \\
+  played > 0 \\
+  pending \leq 1 \\
+  open' = ztrue \\
+  missing' = missing + k? \\
+  starved' = starved \\
+  idle' = idle \\
+  silence' = silence \\
+  trailing' = trailing \\
+  marks' = marks
+\end{schema}
+
+\texttt{Starve} is P6 (the preconditions) and P7 (the $\Xi$~\emph{Sink}).
+
+\begin{schema}{Resume}
+  \Xi Sink \\
+  \Delta Spells \\
+  boundary? : ZBOOL
+\where
+  open = ztrue \\
+  open' = zfalse \\
+  missing' = 0 \\
+  trailing' = trailing \\
+  marks' = marks \\
+  boundary? = ztrue \implies
+    (idle' = idle + 1 \land starved' = starved \land silence' = silence) \\
+  boundary? = zfalse \implies
+    (starved' = starved + 1 \land silence' = silence + missing \land idle' = idle)
+\end{schema}
+
+\texttt{Resume} is audio returning, after the pull that brought it. The
+length of the spell does not appear in the choice: P8.
+
+\begin{schema}{EndInSpell}
+  \Xi Sink \\
+  \Delta Spells
+\where
+  open = ztrue \\
+  phase \in \{ finished, interrupted, closed \} \\
+  open' = zfalse \\
+  missing' = 0 \\
+  trailing' = missing \\
+  idle' = idle \\
+  starved' = starved \\
+  silence' = silence \\
+  marks' = marks
+\end{schema}
+
+\texttt{EndInSpell} closes a spell the stream outlived, on the next callback
+after \texttt{Finish} or \texttt{Flush}, or at \texttt{Close}. Nothing says
+whether the silence was a stall or a pause (the agent gives no end-of-utterance
+marker), so it is neither starvation nor a pause, and its length is kept in
+\emph{trailing} (P8).
+
+One callback can pull audio that ends a spell and run dry again inside the
+same block.
+
+\begin{zed}
+  ResumeThenStarve \defs PullAudio \semi Resume \semi Starve
+\end{zed}
 
 \end{document}

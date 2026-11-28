@@ -52,5 +52,11 @@
     "ceiling": 2,
     "justify": "git worktree add/remove/prune, branch -D and show-ref with a fixed argv list, the same S603/S607 waiver policy.py and command.py carry for their git calls; no shell, no caller text in argv",
     "added_at": "2026-11-24T16:27:30.168899Z"
+  },
+  {
+    "file": "typings/*",
+    "ceiling": 2,
+    "justify": "N818 for third-party stubs: typings/sounddevice declares CallbackStop, the real upstream exception name that pcm_output must import; it cannot gain an Error suffix and a per-line noqa would be a worse suppression",
+    "added_at": "2026-11-27T22:31:39.772165Z"
   }
 ]

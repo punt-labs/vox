@@ -8,7 +8,9 @@ check invariants that hold under every interleaving rather than one order.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
+import struct
 import threading
 import time
 from collections.abc import Callable
@@ -17,11 +19,15 @@ from typing import Self, final
 import pytest
 from conversation_mode._fake_sounddevice import FakeSoundDevice
 
+from punt_vox.voxd import pcm_watch
 from punt_vox.voxd.conversation_mode.device_table import DeviceTable
 from punt_vox.voxd.pcm_audio import PCM_SAMPLE_RATE_HZ
+from punt_vox.voxd.pcm_gap import FADE_FRAMES
+from punt_vox.voxd.pcm_loss import DeviceLoss
 from punt_vox.voxd.pcm_output import (
     OutputCallback,
     OutputDeviceLostError,
+    StreamCompleted,
     sounddevice_output_stream,
 )
 from punt_vox.voxd.pcm_stream import PcmStreamSink
@@ -38,23 +44,33 @@ class FakeOutputStream:
 
     __slots__ = (
         "_callback",
+        "abort_error",
         "aborted",
         "closed",
         "finished_callback",
         "heard",
+        "heard_at_release",
+        "is_finished",
         "release_gate",
+        "reports_finished",
         "start_error",
         "started",
         "stop_error",
+        "stop_gate",
         "stopped",
     )
 
     _callback: OutputCallback
     release_gate: threading.Event | None
+    stop_gate: threading.Event | None
+    abort_error: Exception | None
     aborted: bool
     closed: bool
     finished_callback: Callable[[], None]
     heard: bytearray
+    heard_at_release: int | None
+    is_finished: bool
+    reports_finished: bool
     start_error: Exception | None
     started: bool
     stop_error: Exception | None
@@ -72,14 +88,29 @@ class FakeOutputStream:
         self.stopped = False
         self.start_error = None
         self.stop_error = None
+        self.abort_error = None
         self.release_gate = None
+        self.stop_gate = None
         self.heard = bytearray()
+        self.heard_at_release = None
+        self.is_finished = False
+        self.reports_finished = True
         return self
 
     def pull(self, blocks: int = 1, *, pace_s: float = 0.0) -> None:
         for _ in range(blocks):
+            if self.is_finished:  # PortAudio stops calling back after paComplete
+                time.sleep(pace_s)
+                continue
             out = bytearray(BLOCK * 2)
-            self._callback(out, BLOCK, None, None)
+            try:
+                self._callback(out, BLOCK, None, None)
+            except StreamCompleted:
+                self.heard += out
+                self.is_finished = True
+                if self.reports_finished:
+                    self.finished_callback()
+                continue
             self.heard += out
             if pace_s:
                 time.sleep(pace_s)
@@ -90,17 +121,23 @@ class FakeOutputStream:
         self.started = True
 
     def stop(self) -> None:
+        if self.stop_gate is not None:
+            self.stop_gate.wait(timeout=5)  # a device that never finishes draining
         if self.release_gate is not None:
             self.release_gate.wait(timeout=5)
         if self.stop_error is not None:
             raise self.stop_error
+        self.heard_at_release = len(self.heard)
         self.stopped = True
         self.finished_callback()
 
     def abort(self) -> None:
         if self.release_gate is not None:
             self.release_gate.wait(timeout=5)
+        self.heard_at_release = len(self.heard)
         self.aborted = True
+        if self.abort_error is not None:
+            raise self.abort_error
         self.finished_callback()
 
     def close(self) -> None:
@@ -161,18 +198,27 @@ class TestPcmStreamSink:
         sink, device = await open_sink()
         sink.feed(ms_of(OLD, 10))
         sink.feed(ms_of(NEW, 10))
+        sink.finish()  # a response still arriving is a dry spell, not an ending
         device.opened.pull(2)
         heard = bytes(device.opened.heard)
-        assert heard == ms_of(OLD, 10) + ms_of(NEW, 10) + bytes(BLOCK * 2)
+        played = ms_of(OLD, 10) + ms_of(NEW, 10)
+        assert heard[: len(played)] == played
+        assert not any(heard[len(played) + FADE_FRAMES * 2 :])
 
-    async def test_flush_silences_the_next_block(self) -> None:
+    async def test_flush_fades_the_next_block_to_silence(self) -> None:
+        """Only the 3 ms tail of the cut sample sounds; none of the flushed audio."""
         sink, device = await open_sink()
         sink.feed(ms_of(OLD, 500))
         device.opened.pull(5)
         report = sink.flush()
         device.opened.pull(1)
+        block = device.opened.heard[-BLOCK * 2 :]
+        fade_bytes = FADE_FRAMES * 2
         assert report.dropped.ms == pytest.approx(400.0)
-        assert device.opened.heard[-BLOCK * 2 :] == bytes(BLOCK * 2)
+        assert block[fade_bytes:] == bytes(BLOCK * 2 - fade_bytes)
+        samples = [sample for (sample,) in struct.iter_unpack("<h", block)]
+        assert 0 < samples[0] < int.from_bytes(OLD, "little")
+        assert samples == sorted(samples, reverse=True)
 
     async def test_feed_after_flush_is_ignored(self) -> None:
         sink, device = await open_sink()
@@ -198,9 +244,12 @@ class TestPcmStreamSink:
         device.opened.pull(1)
         await asyncio.wait_for(sink.wait(), timeout=1)
 
-    async def test_finish_with_nothing_pending_completes_at_once(self) -> None:
-        sink, _ = await open_sink()
+    async def test_finish_with_nothing_pending_completes_on_the_next_callback(
+        self,
+    ) -> None:
+        sink, device = await open_sink()
         sink.finish()
+        device.opened.pull(1)
         await asyncio.wait_for(sink.wait(), timeout=1)
 
     async def test_flush_releases_a_waiter(self) -> None:
@@ -238,6 +287,7 @@ class TestPcmStreamSink:
         sink.feed(ms_of(OLD, 20))
         device.opened.pull(1)
         sink.finish()
+        device.opened.pull(1)  # the fade-out after the last sample plays first
         await asyncio.wait_for(sink.wait(), timeout=1)
         await sink.close()
         assert device.opened.stopped
@@ -277,12 +327,16 @@ class TestPcmStreamSink:
             await sink.open(failing)
         assert device.opened.closed
 
-    async def test_underflow_counts_starved_blocks_after_audio_starts(self) -> None:
+    async def test_underflow_counts_one_dry_spell_after_audio_starts(self) -> None:
         sink, device = await open_sink()
         device.opened.pull(2)
         sink.feed(ms_of(OLD, 30))
         device.opened.pull(3)
-        assert (await sink.close()).underflows == 2
+        sink.feed(ms_of(OLD, 20))
+        device.opened.pull(1)
+        report = await sink.close()
+        assert report.underflows == 1
+        assert report.gap_total.ms == pytest.approx(30.0)
 
     async def test_device_flags_are_counted_and_reported(self) -> None:
         sink, device = await open_sink()
@@ -376,6 +430,7 @@ class TestSinkPhases:
         """A stop after an empty response finished is a no-op (FlushNoOp)."""
         sink, device = await open_sink()
         sink.finish()
+        device.opened.pull(1)
         assert sink.flush().dropped.nbytes == 0
         report = await sink.close()
         assert not report.interrupted
@@ -404,6 +459,7 @@ class TestSinkPhases:
     async def test_close_closes_the_device_when_stop_fails(self) -> None:
         sink, device = await open_sink()
         sink.finish()
+        device.opened.pull(1)  # the device plays out, then reports finished
         device.opened.stop_error = OSError("device unplugged")
         with pytest.raises(OSError, match="unplugged"):
             await sink.close()
@@ -538,6 +594,7 @@ class TestDeviceFailures:
         device.opened.release_gate = release
         device.opened.stop_error = OSError("device unplugged")
         sink.finish()
+        device.opened.pull(1)
         closing = asyncio.create_task(sink.close())
         await asyncio.sleep(0.01)
         closing.cancel()
@@ -648,6 +705,7 @@ class TestDeviceFailures:
         caplog.set_level(logging.INFO, logger="punt_vox.voxd.pcm_stream")
         sink, device = await open_sink()
         sink.finish()
+        device.opened.pull(1)  # the device plays out, then reports finished
         device.opened.stop_error = OSError("device unplugged")
         with pytest.raises(OSError, match="unplugged"):
             await sink.close()
@@ -700,8 +758,10 @@ class TestPcmStreamRaces:
                 report = sink.flush()
                 heard_at_flush = len(device.opened.heard)
                 await asyncio.sleep(0.001)
-            # The device may be mid-pull when the flush lands: one block, no more.
-            after = bytes(device.opened.heard[heard_at_flush + BLOCK * 2 :])
+            # The device may be mid-pull when the flush lands: one block, then
+            # the 3 ms fade-out of the cut sample, no more.
+            allowed = (BLOCK + FADE_FRAMES) * 2
+            after = bytes(device.opened.heard[heard_at_flush + allowed :])
             assert not any(after), "pre-flush audio played after the flush"
             dropped_any |= report.dropped.nbytes > 0
             played_any |= sink.played.nbytes > 0
@@ -782,6 +842,78 @@ class TestPlaybackQueueOwnership:
             assert playback.mutex.locked()
             sink.feed(ms_of(OLD, 20))
         assert not playback.mutex.locked()
+        assert device.opened.aborted
+
+    async def test_a_device_that_confirms_late_is_a_note_not_a_failure(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Every block reached the device: the person heard the whole reply."""
+        monkeypatch.setattr(pcm_watch, "PLAYOUT_WAIT_S", 0.05)
+        device = FakeDevice()
+        playback = PlaybackQueue(device)
+        async with playback.stream_pcm() as sink:
+            sink.feed(ms_of(OLD, 20))
+            sink.finish()
+            device.opened.reports_finished = False  # the confirmation is late
+            device.opened.pull(3)
+        assert device.opened.aborted
+        assert not playback.mutex.locked()
+        assert sink.note == DeviceLoss.UNCONFIRMED.message
+
+    async def test_a_device_that_stopped_fails_the_exit_and_says_so(self) -> None:
+        playback = PlaybackQueue(device := FakeDevice())
+        with pytest.raises(OutputDeviceLostError) as failed:
+            async with playback.stream_pcm() as sink:
+                sink.feed(ms_of(OLD, 100))
+                device.opened.finished_callback()  # PortAudio stopped on its own
+        assert str(failed.value) == DeviceLoss.STOPPED.message
+        assert device.opened.closed
+        assert not playback.mutex.locked()
+
+    async def test_a_device_that_stalled_fails_the_exit_and_says_so(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(pcm_watch, "STALL_WAIT_S", 0.01)
+        playback = PlaybackQueue(device := FakeDevice())
+        with pytest.raises(OutputDeviceLostError) as failed:
+            async with playback.stream_pcm() as sink:
+                sink.feed(ms_of(OLD, 100))
+                sink.finish()
+                with contextlib.suppress(OutputDeviceLostError):
+                    await asyncio.wait_for(sink.wait(), timeout=2)  # no callbacks
+        assert str(failed.value) == DeviceLoss.STALLED.message
+        assert device.opened.closed
+
+    async def test_a_release_error_does_not_replace_the_callers_error(self) -> None:
+        playback = PlaybackQueue(device := FakeDevice())
+        with pytest.raises(RuntimeError, match="call dropped") as caller:
+            async with playback.stream_pcm():
+                device.opened.abort_error = OSError("device unplugged")
+                raise RuntimeError("call dropped")
+        assert any("device unplugged" in n for n in caller.value.__notes__)
+        assert device.opened.closed
+
+    async def test_a_device_lost_before_a_barge_in_leaves_a_note(self) -> None:
+        playback = PlaybackQueue(device := FakeDevice())
+        async with playback.stream_pcm() as sink:
+            sink.feed(ms_of(OLD, 100))
+            device.opened.finished_callback()  # the device dies mid-reply
+            sink.flush()  # the person talks into the silence
+        assert sink.note == "output device was lost before the reply was cut"
+
+    async def test_a_flushed_stream_the_device_never_confirms_exits_quietly(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A barge-in is deliberate: the abandoned device is not a failure."""
+        monkeypatch.setattr(pcm_watch, "PLAYOUT_WAIT_S", 0.05)
+        device = FakeDevice()
+        playback = PlaybackQueue(device)
+        async with playback.stream_pcm() as sink:
+            sink.feed(ms_of(OLD, 60))
+            device.opened.pull(1)
+            device.opened.reports_finished = False
+            sink.flush()
+            device.opened.pull(2)
         assert device.opened.aborted
 
     async def test_queued_playback_waits_behind_the_stream(self) -> None:

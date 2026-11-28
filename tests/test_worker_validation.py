@@ -621,3 +621,80 @@ def test_stop_treats_a_session_vanishing_mid_stop_as_finished(
     ):
         TmuxWorkerProvider().stop("worker")
     assert finish.call_count == (1 if vanishes_at == "kill" else 0)
+
+
+def test_stop_treats_a_server_that_exits_during_has_session_as_a_finished_stop() -> (
+    None
+):
+    """tmux shuts down after its last session ends; the probe can lose that race."""
+    with patch.object(
+        TmuxWorkerProvider,
+        "_run",
+        side_effect=[
+            subprocess.CompletedProcess([], 1, "", "server exited unexpectedly\n")
+        ],
+    ) as run:
+        TmuxWorkerProvider().stop("vox-gone")
+    assert run.call_count == 1  # no pane read, no kill: the session is gone
+
+
+def test_a_server_that_exits_during_has_session_is_not_a_live_session() -> None:
+    with patch.object(
+        TmuxWorkerProvider,
+        "_run",
+        side_effect=[
+            subprocess.CompletedProcess([], 1, "", "server exited unexpectedly\n")
+        ],
+    ):
+        assert TmuxWorkerProvider().status("vox-gone") is False
+
+
+def _gone(
+    stderr: str = "server exited unexpectedly\n",
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess([], 1, "", stderr)
+
+
+def test_stop_is_finished_when_the_server_exits_before_the_pane_read() -> None:
+    """has-session saw the session; the last session then ended with the server."""
+    with patch.object(
+        TmuxWorkerProvider,
+        "_run",
+        side_effect=[subprocess.CompletedProcess([], 0, "", ""), _gone()],
+    ) as run:
+        TmuxWorkerProvider().stop("vox-gone")
+    assert run.call_count == 2  # no kill: nothing is left to kill
+
+
+def test_status_is_false_when_the_server_exits_before_the_pane_read() -> None:
+    with patch.object(
+        TmuxWorkerProvider,
+        "_run",
+        side_effect=[subprocess.CompletedProcess([], 0, "", ""), _gone()],
+    ):
+        assert TmuxWorkerProvider().status("vox-gone") is False
+
+
+def test_stop_is_finished_when_the_server_exits_before_list_sessions() -> None:
+    with patch.object(
+        TmuxWorkerProvider,
+        "_run",
+        side_effect=[_gone("no current target"), _gone()],
+    ) as run:
+        TmuxWorkerProvider().stop("vox-gone")
+    assert run.call_count == 2
+
+
+def test_an_unrelated_pane_read_failure_still_raises() -> None:
+    sequence = [subprocess.CompletedProcess([], 0, "", ""), _gone("server crashed")]
+    with (
+        patch.object(TmuxWorkerProvider, "_run", side_effect=sequence),
+        pytest.raises(RuntimeError, match=r"^Worker session could not be killed$"),
+    ):
+        TmuxWorkerProvider().stop("vox-live")
+    sequence = [subprocess.CompletedProcess([], 0, "", ""), _gone("server crashed")]
+    with (
+        patch.object(TmuxWorkerProvider, "_run", side_effect=sequence),
+        pytest.raises(RuntimeError, match="liveness probe"),
+    ):
+        TmuxWorkerProvider().status("vox-live")

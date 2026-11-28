@@ -98,7 +98,7 @@ class TmuxWorkerProvider:
         pane = self._run(
             "display-message", "-p", "-t", f"={handle}:", "#{pane_dead}", check=False
         )
-        return TmuxProbe.pane_alive(pane)
+        return not self._server_exited(pane) and TmuxProbe.pane_alive(pane)
 
     def _session_missing(
         self, handle: str, result: subprocess.CompletedProcess[str]
@@ -106,10 +106,25 @@ class TmuxWorkerProvider:
         if result.returncode != 0 and result.stderr.strip() == "no current target":
             sessions = self._run("list-sessions", "-F", "#{session_name}", check=False)
             return (
-                TmuxProbe.missing(sessions)
+                self._server_exited(sessions)
+                or TmuxProbe.missing(sessions)
                 or handle not in sessions.stdout.splitlines()
             )
-        return TmuxProbe.missing(result)
+        return self._server_exited(result) or TmuxProbe.missing(result)
+
+    @staticmethod
+    def _server_exited(result: subprocess.CompletedProcess[str]) -> bool:
+        """Return whether a read-only probe lost the race with tmux shutting down.
+
+        The server exits when its last session ends, so a probe that follows a
+        successful has-session can meet that exit: the session is gone. Only
+        reads use this; a kill-session reporting the same text stays a failure
+        (see _ended), because the pane may still be live.
+        """
+        return (
+            result.returncode != 0
+            and result.stderr.strip() == "server exited unexpectedly"
+        )
 
     def stop(self, handle: str) -> None:
         """Kill the session and its pane process group.
@@ -130,7 +145,7 @@ class TmuxWorkerProvider:
         pane = self._run(
             "display-message", "-p", "-t", f"={handle}:", "#{pane_pid}", check=False
         )
-        if self._ended(pane):
+        if self._server_exited(pane) or self._ended(pane):
             return
         group = self._pane_group(pane.stdout)
         # A session gone by the kill still had a pane group a moment ago;
