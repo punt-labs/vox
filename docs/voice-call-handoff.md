@@ -202,7 +202,7 @@ sentence in the prompt does the same job with no new registration.
   the model, every asked question that has no answer or deferral (`why`:
   "not discussed"). The session never has to infer that something was skipped.
 - `status` is `complete` or `partial`. `partial_reason` says why: "the caller
-  hung up before the agent closed the call", "the call failed: <error>",
+  hung up before the agent closed the call", "the call failed: ERROR" (the call's error text),
   "voxd stopped before the call ended", or "questions not answered: retry".
 
 **Producer.** The agent, through one new client tool, `note_handoff`, called
