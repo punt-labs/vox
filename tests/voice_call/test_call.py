@@ -333,6 +333,7 @@ async def test_a_hangup_is_not_final_until_the_last_reply_played_out(
     playback = UnconfirmedPlayback()
     playback.play_out_s = 0.3
     states: list[object] = []
+    status: dict[str, object] = {}
     async with asyncio.timeout(10), serve(peer, "127.0.0.1", 0) as server:
         port = server.sockets[0].getsockname()[1]
         handlers = _handlers(
