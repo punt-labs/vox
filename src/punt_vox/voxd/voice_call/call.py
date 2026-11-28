@@ -182,14 +182,13 @@ class VoiceAgentCall:
 
     async def _play_out(self) -> None:
         """Let the last reply finish, then settle the call: ended, or failed."""
-        unplayed: str | None = None
-        try:
-            unplayed = await self._speaker.finish()
-        finally:
-            if unplayed is None:
-                self._state = "ended"
-            else:
-                self.mark_failed(unplayed)
+        # An error from finish() leaves the call non-final: only the launcher
+        # settles it, so no client sees "ended" before "failed".
+        unplayed = await self._speaker.finish()
+        if unplayed is not None:
+            self.mark_failed(unplayed)
+        elif self._state in {"connecting", "live"}:
+            self._state = "ended"
 
     async def _converse(
         self,

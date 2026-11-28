@@ -440,6 +440,68 @@ async def test_the_outcome_counts_every_tool_call() -> None:
 _END_CALL = AgentToolResponse("end_1", False, "end_call", "system")
 
 
+async def test_a_peer_close_that_meets_another_fault_still_fails_the_call() -> None:
+    """The group holds an EOFError and an ordinary error: the failure stands."""
+
+    class _ResettingPeer(_Peer):
+        async def send_audio(self, pcm: bytes) -> None:
+            del pcm
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:  # the socket breaks as the peer closes
+                msg = "connection reset"
+                raise OSError(msg) from None
+
+    call = _call(_ResettingPeer([]), audio=_OneChunk())
+    await call.run(_dial)
+    status = call.status()
+    assert status["state"] == "failed"
+    assert "connection reset" in str(status["error"])
+    assert status["ended_by"] is None
+
+
+async def test_a_group_of_a_peer_close_and_a_send_fault_fails_the_call() -> None:
+    """A tool answer still sending when the peer closes: both reach the group."""
+
+    async def dial() -> tuple[str, SessionOptions]:
+        msg = "send failed"
+        raise ExceptionGroup("tasks", [EOFError(), ConvAIError(msg)])
+
+    call = _call(_Peer([]))
+    await call.run(dial)
+    status = call.status()
+    assert (status["state"], status["error"]) == ("failed", "send failed")
+    assert status["ended_by"] is None
+
+
+async def test_a_release_error_during_play_out_is_never_seen_as_ended() -> None:
+    """A client stops following at "ended": a failing release must not show it."""
+
+    class _BrokenSpeaker:
+        notes: tuple[str, ...] = ()
+
+        async def play(self, audio: Audio) -> None:
+            del audio
+
+        def note_tool_call(self) -> None:
+            pass
+
+        async def interrupt(self, event_id: int) -> None:
+            del event_id
+
+        async def close(self) -> None:
+            pass
+
+        async def finish(self) -> str | None:
+            msg = "PortAudio release failed"
+            raise RuntimeError(msg)
+
+    call = _call(_Peer([]), speaker=cast("AgentSpeaker", _BrokenSpeaker()))
+    with pytest.raises(RuntimeError, match="release failed"):
+        await call.run(_dial)
+    assert call.status()["state"] in {"connecting", "live"}
+
+
 async def test_a_failure_after_the_agents_end_call_is_nobodys_hang_up() -> None:
     """C12 in docs/voice-call.tex: a failed call names nobody as who ended it.
 
