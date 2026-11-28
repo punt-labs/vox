@@ -12,6 +12,12 @@
     "added_at": "2026-11-23T19:45:00Z"
   },
   {
+    "file": "src/punt_vox/enablement_state.py",
+    "ceiling": 1,
+    "justify": "PL-1761: git check-ignore and ls-files subprocess calls with resolved git binary",
+    "added_at": "2026-11-28T06:48:57.999077Z"
+  },
+  {
     "file": "src/punt_vox/voxd/conversation_mode/device_table.py",
     "ceiling": 1,
     "justify": "Lazy sounddevice import for the optional call extra (PortAudio): DeviceTable re-reads the device table only when a call opens a device, the same per-file PLC0415 ignore portaudio.py, input_device.py and pcm_output.py carry; a top-level import would break voxd start on a host without PortAudio.",

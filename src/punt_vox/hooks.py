@@ -426,7 +426,7 @@ def _resolve_continuous_config() -> tuple[VoxConfig, Path] | None:
 def stop_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     """Stop hook: task-completion notification."""
     payload = StopPayload.parse(_read_hook_input())
-    config_dir = find_config_dir(payload.cwd)
+    config_dir = find_config_dir(payload.cwd) or ConfigStore.enabled_dir(payload.cwd)
     if config_dir is None:
         logger.debug("hook stop: no vox config for cwd; staying silent")
         return
@@ -454,7 +454,7 @@ def vibe_nudge_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
 def notification_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     """Notification hook: permission/idle prompt audio alerts."""
     payload = NotificationPayload.parse(_read_hook_input())
-    config_dir = find_config_dir(payload.cwd)
+    config_dir = find_config_dir(payload.cwd) or ConfigStore.enabled_dir(payload.cwd)
     if config_dir is None:
         logger.debug("hook notification: no vox config for cwd; staying silent")
         return

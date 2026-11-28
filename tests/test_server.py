@@ -273,20 +273,20 @@ class TestWriteConfigField:
     def test_creates_parent_directory(self, tmp_path: Path) -> None:
         nested = tmp_path / "deep" / "dir"
         ConfigStore(nested).write_field("notify", "y")
-        vox_md = nested / "vox.md"
-        assert vox_md.exists()
-        assert 'notify: "y"' in vox_md.read_text()
+        vox_local = nested / "vox.local.md"
+        assert vox_local.exists()
+        assert 'notify: "y"' in vox_local.read_text()
 
     def test_malformed_file_warns_and_overwrites(
         self, _patch_config: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
-        vox_md = _patch_config / "vox.md"
-        vox_md.write_text("no frontmatter at all\n")
+        vox_local = _patch_config / "vox.local.md"
+        vox_local.write_text("no frontmatter at all\n")
         import logging
 
         with caplog.at_level(logging.WARNING, logger="punt_vox.config"):
             ConfigStore(_patch_config).write_field("notify", "y")
-        assert 'notify: "y"' in vox_md.read_text()
+        assert 'notify: "y"' in vox_local.read_text()
         assert "Malformed config" in caplog.text
 
 

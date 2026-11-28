@@ -50,8 +50,12 @@ class ToolOwnedFile:
         """Return whether the path is a regular file (a symlink counts as absent)."""
         return self._path.is_file() and not self._path.is_symlink()
 
-    def write(self, text: str) -> None:
+    def write(self, text: str) -> bool:
         """Write *text* wholesale, making the parent dir, refusing a symlink.
+
+        Skips the write (no truncate, no mtime change) when the existing regular
+        file already holds the exact bytes (TED-12). Returns ``True`` if the
+        file was written and ``False`` when bytes were already identical.
 
         The whole path from the trusted *base* to the leaf is checked for symlinks
         **before** any directory is created, then the open itself carries
@@ -59,10 +63,18 @@ class ToolOwnedFile:
         check and the open still fails loud instead of overwriting its target.
         """
         self._reject_symlinked_path()
+        encoded = text.encode("utf-8")
+        if self.is_present():
+            try:
+                if self._path.read_bytes() == encoded:
+                    return False
+            except OSError:
+                pass
         self._path.parent.mkdir(parents=True, exist_ok=True)
         fd = os.open(self._path, _WRITE_FLAGS, _NEW_FILE_MODE)
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(text)
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(encoded)
+        return True
 
     def remove(self) -> None:
         """Delete the path; an already-absent path is a clean no-op.

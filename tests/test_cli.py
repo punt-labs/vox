@@ -1387,10 +1387,10 @@ class TestVibeCommand:
 @pytest.mark.parametrize(
     ("args", "filename"),
     [
-        (["notify", "normal", "--json"], "vox.md"),
-        (["--json", "speak", "n"], "vox.md"),
+        (["notify", "normal", "--json"], "vox.local.md"),
+        (["--json", "speak", "n"], "vox.local.md"),
         (["--json", "vibe", "whispering"], "vox.local.md"),
-        (["provider", "elevenlabs", "--json"], "vox.md"),
+        (["provider", "elevenlabs", "--json"], "vox.local.md"),
     ],
 )
 def test_config_edit_invalid_utf8_json(
@@ -1436,7 +1436,7 @@ class TestNotifyCommand:
         result = runner.invoke(app, ["notify", "normal"])
         assert result.exit_code == 0
         assert "normal" in result.output.lower()
-        assert 'notify: "y"' in (tmp_path / "vox.md").read_text()
+        assert 'notify: "y"' in (tmp_path / "vox.local.md").read_text()
 
     def test_notify_continuous(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
         import punt_vox.config as cfg
@@ -1450,7 +1450,7 @@ class TestNotifyCommand:
         result = runner.invoke(app, ["notify", "continuous"])
         assert result.exit_code == 0
         assert "continuous" in result.output.lower()
-        assert 'notify: "c"' in (tmp_path / "vox.md").read_text()
+        assert 'notify: "c"' in (tmp_path / "vox.local.md").read_text()
 
     def test_notify_in_nested_repo_writes_inner_config(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1508,7 +1508,7 @@ class TestNotifyCommand:
         assert result.exit_code == 0, result.output
         assert json.loads(result.output) == {"notify": "c", "speak": "y"}
         expected = (no_config_dir if in_repo else child) / relative_config
-        assert list(no_config_dir.rglob("vox.md")) == [expected / "vox.md"]
+        assert list(no_config_dir.rglob("vox.local.md")) == [expected / "vox.local.md"]
         assert ConfigStore(expected).read_field("notify") == "c"
 
     def test_unchanged_provider_in_nested_repo_keeps_inheriting(
@@ -1549,7 +1549,7 @@ class TestNotifyCommand:
         runner = CliRunner()
         result = runner.invoke(app, ["notify", "continuous"])
         assert result.exit_code == 0
-        text = vox_md.read_text()
+        text = (tmp_path / "vox.local.md").read_text()
         assert 'speak: "y"' in text
         assert 'notify: "c"' in text
 
@@ -1740,7 +1740,7 @@ class TestVoiceCommand:
 
         assert result.exit_code == 0, result.output
         assert "Matilda's here." in result.output
-        assert 'voice: "Matilda"' in config.read_text()
+        assert 'voice: "Matilda"' in (tmp_path / "vox.local.md").read_text()
 
     @patch(f"{_CLI}.VoxClientSync")
     def test_voice_set_rejects_provider_change_during_roster_fetch(
@@ -1748,7 +1748,7 @@ class TestVoiceCommand:
     ) -> None:
         monkeypatch.setattr("punt_vox.dirs.find_config_dir", resolver_at(tmp_path))
         monkeypatch.setattr("punt_vox.dirs.writable_config_dir", resolver_at(tmp_path))
-        config = tmp_path / "vox.md"
+        config = tmp_path / "vox.local.md"
         config.write_text('---\nprovider: "elevenlabs"\nvoice: "matilda"\n---\n')
         switched = '---\nprovider: "openai"\nvoice: "alloy"\n---\n'
 
@@ -1786,7 +1786,7 @@ class TestVoiceCommand:
         if provider == "elevenlabs":
             assert result.exit_code == 0, result.output
             assert json.loads(result.output) == {"voice": voice_id}
-            assert f'voice: "{voice_id}"' in config.read_text()
+            assert f'voice: "{voice_id}"' in (tmp_path / "vox.local.md").read_text()
             mock_client_cls.return_value.voices.assert_not_called()
         else:
             assert result.exit_code == 1, result.output

@@ -349,7 +349,8 @@ async def test_desktop_provider_survives_mcp_restart(desktop_sandbox: Path) -> N
             subprocess.run(
                 [binary, "provider", "espeak"], cwd=repo, env=env, check=True
             )
-            assert (repo / DEFAULT_CONFIG_DIR / "vox.md").is_file()
+            assert (repo / DEFAULT_CONFIG_DIR / "vox.local.md").is_file()
+            assert not (repo / DEFAULT_CONFIG_DIR / "vox.md").exists()
 
             params.cwd = restarted
             async with (
@@ -365,9 +366,9 @@ async def test_desktop_provider_survives_mcp_restart(desktop_sandbox: Path) -> N
                 audio = speech.content[0]
                 assert audio.type == "text"
                 assert json.loads(audio.text)[0]["provider"] == "espeak"
-        assert (desktop.parent / "vox" / DEFAULT_CONFIG_DIR / "vox.md").is_file()
-        assert not (home / DEFAULT_CONFIG_DIR / "vox.md").exists()
-        assert not (first / DEFAULT_CONFIG_DIR / "vox.md").exists()
+        assert (desktop.parent / "vox" / DEFAULT_CONFIG_DIR / "vox.local.md").is_file()
+        assert not (home / DEFAULT_CONFIG_DIR / "vox.local.md").exists()
+        assert not (first / DEFAULT_CONFIG_DIR / "vox.local.md").exists()
     finally:
         daemon.terminate()
         try:

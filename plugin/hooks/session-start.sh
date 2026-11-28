@@ -220,7 +220,7 @@ fi
 # shellcheck source=plugin/hooks/repo-root.sh
 source "$(dirname "${BASH_SOURCE[0]}")/repo-root.sh"
 _repo_root=$(vox_hook_repo_root "$_cwd")
-if [ -f "$_repo_root/.punt-labs/vox/enabled" ]; then
+if vox_hook_is_enabled "$_repo_root"; then
   # The genuinely persistent `claude` process is the wrapper's *parent*, i.e.
   # $PPID's grandparent from here. Resolve it, but verify its command name is
   # EXACTLY "claude" (not a substring/glob match -- a process named

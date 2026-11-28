@@ -69,6 +69,10 @@ against the product.
   issue, and names in the diff by its PL number, is known; do not raise it
   again. This never covers a security finding: raise those whatever the diff
   cites.
+- Usability-breaking "security" refusals. Normal user workflows (`vox enable`,
+  `vox disable`, `--refresh`, startup, and personal-scope `.git/info/exclude`
+  auto-setup) must work without extra user approval or manual setup; do not ask
+  to make normal commands refuse to run.
 
 ## Docs-only pull requests
 

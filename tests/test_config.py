@@ -32,10 +32,17 @@ class TestWriteFieldRouting:
     """Design tests 1, 2, 11, 12."""
 
     def test_write_field_routes_durable_to_vox_md(self, tmp_path: Path) -> None:
-        """Test 1: write 'voice' lands in vox.md only."""
-        ConfigStore(tmp_path).write_field("voice", "charlie")
+        """Test 1: write durable team policy 'worker_repos' lands in vox.md only."""
+        ConfigStore(tmp_path).write_field("worker_repos", "/tmp/a")
         assert (tmp_path / "vox.md").exists()
         assert not (tmp_path / "vox.local.md").exists()
+        assert ConfigStore(tmp_path).read_field("worker_repos") == "/tmp/a"
+
+    def test_write_field_routes_personal_to_vox_local_md(self, tmp_path: Path) -> None:
+        """Personal prefs like 'voice' land in gitignored vox.local.md only."""
+        ConfigStore(tmp_path).write_field("voice", "charlie")
+        assert (tmp_path / "vox.local.md").exists()
+        assert not (tmp_path / "vox.md").exists()
         assert ConfigStore(tmp_path).read_field("voice") == "charlie"
 
     def test_write_field_routes_ephemeral_to_vox_local_md(self, tmp_path: Path) -> None:
@@ -49,7 +56,7 @@ class TestWriteFieldRouting:
         """Test 11: write to nonexistent dir creates it."""
         deep = tmp_path / "a" / "b" / "c"
         ConfigStore(deep).write_field("voice", "fin")
-        assert (deep / "vox.md").exists()
+        assert (deep / "vox.local.md").exists()
         assert ConfigStore(deep).read_field("voice") == "fin"
 
     def test_write_field_rejects_unknown_key(self, tmp_path: Path) -> None:
@@ -70,20 +77,25 @@ class TestWriteFieldsRouting:
     """Design test 3."""
 
     def test_write_fields_mixed_keys_routes_correctly(self, tmp_path: Path) -> None:
-        """Test 3: mixed durable + ephemeral routes correctly."""
-        ConfigStore(tmp_path).write_fields({"notify": "y", "vibe_tags": "[calm]"})
+        """Test 3: mixed durable + local routes correctly."""
+        ConfigStore(tmp_path).write_fields(
+            {"worker_repos": "/tmp/r", "notify": "y", "vibe_tags": "[calm]"}
+        )
 
-        # Durable key "notify" must be in vox.md
-        assert ConfigStore(tmp_path).read_field("notify") == "y"
+        # Durable team policy key "worker_repos" must be in vox.md
+        assert ConfigStore(tmp_path).read_field("worker_repos") == "/tmp/r"
         vox_text = (tmp_path / "vox.md").read_text()
-        assert "notify" in vox_text
+        assert "worker_repos" in vox_text
+        assert "notify" not in vox_text
         assert "vibe_tags" not in vox_text
 
-        # Ephemeral key "vibe_tags" must be in vox.local.md
+        # Personal + ephemeral keys land in vox.local.md
+        assert ConfigStore(tmp_path).read_field("notify") == "y"
         assert ConfigStore(tmp_path).read_field("vibe_tags") == "[calm]"
         local_text = (tmp_path / "vox.local.md").read_text()
+        assert "notify" in local_text
         assert "vibe_tags" in local_text
-        assert "notify" not in local_text
+        assert "worker_repos" not in local_text
 
 
 class TestReadConfig:
@@ -151,16 +163,16 @@ class TestReadConfig:
         cfg = ConfigStore(global_dir).read()
         assert cfg.repo_name is None
 
-    def test_local_durable_keys_ignored(self, tmp_path: Path) -> None:
-        """Durable keys in vox.local.md must not override vox.md."""
+    def test_local_personal_keys_override_team_defaults(self, tmp_path: Path) -> None:
+        """Personal overrides in vox.local.md layer over team defaults in vox.md."""
         _write_frontmatter(tmp_path / "vox.md", {"notify": "n", "provider": "polly"})
         _write_frontmatter(
             tmp_path / "vox.local.md",
             {"notify": "c", "provider": "elevenlabs", "vibe": "calm"},
         )
         cfg = ConfigStore(tmp_path).read()
-        assert cfg.notify == "n"
-        assert cfg.provider == "polly"
+        assert cfg.notify == "c"
+        assert cfg.provider == "elevenlabs"
         assert cfg.vibe == "calm"
 
     def test_read_config_missing_files(self, tmp_path: Path) -> None:
@@ -418,13 +430,19 @@ class TestWriteFieldsValidation:
 
 
 class TestKeySetConsistency:
-    """DURABLE_KEYS and EPHEMERAL_KEYS are disjoint and cover ALLOWED."""
+    """DURABLE_KEYS, PERSONAL_KEYS, and EPHEMERAL_KEYS partition ALLOWED."""
 
     def test_disjoint(self) -> None:
+        from punt_vox.config import PERSONAL_KEYS
+
         assert not (DURABLE_KEYS & EPHEMERAL_KEYS)
+        assert not (DURABLE_KEYS & PERSONAL_KEYS)
+        assert not (PERSONAL_KEYS & EPHEMERAL_KEYS)
 
     def test_union_is_allowed(self) -> None:
-        assert DURABLE_KEYS | EPHEMERAL_KEYS == ALLOWED_CONFIG_KEYS
+        from punt_vox.config import PERSONAL_KEYS
+
+        assert DURABLE_KEYS | PERSONAL_KEYS | EPHEMERAL_KEYS == ALLOWED_CONFIG_KEYS
 
 
 # -- ConfigStore class tests ----------------------------------------------
@@ -502,20 +520,20 @@ class TestConfigStoreWrite:
 
     def test_write_non_utf8_durable_refuses_to_overwrite(self, tmp_path: Path) -> None:
         path = tmp_path / "vox.md"
-        original = b'---\nnotify: "y"\n---\n\xff\n'
+        original = b'---\nworker_repos: "/tmp/a"\n---\n\xff\n'
         path.write_bytes(original)
 
         with pytest.raises(UnicodeDecodeError):
-            ConfigStore(tmp_path).write_field("notify", "n")
+            ConfigStore(tmp_path).write_field("worker_repos", "/tmp/b")
 
         assert path.read_bytes() == original
 
     def test_write_field_durable(self, tmp_path: Path) -> None:
         store = ConfigStore(tmp_path)
-        store.write_field("voice", "charlie")
+        store.write_field("worker_repos", "/tmp/a")
         assert (tmp_path / "vox.md").exists()
         assert not (tmp_path / "vox.local.md").exists()
-        assert store.read_field("voice") == "charlie"
+        assert store.read_field("worker_repos") == "/tmp/a"
 
     def test_write_field_ephemeral(self, tmp_path: Path) -> None:
         store = ConfigStore(tmp_path)
@@ -534,11 +552,11 @@ class TestConfigStoreWrite:
 
     def test_write_fields_mixed(self, tmp_path: Path) -> None:
         store = ConfigStore(tmp_path)
-        store.write_fields({"notify": "y", "vibe_tags": "[calm]"})
-        assert store.read_field("notify") == "y"
+        store.write_fields({"worker_repos": "/tmp/a", "vibe_tags": "[calm]"})
+        assert store.read_field("worker_repos") == "/tmp/a"
         assert store.read_field("vibe_tags") == "[calm]"
         # Verify routing: durable in vox.md, ephemeral in vox.local.md
-        assert "notify" in (tmp_path / "vox.md").read_text()
+        assert "worker_repos" in (tmp_path / "vox.md").read_text()
         assert "vibe_tags" in (tmp_path / "vox.local.md").read_text()
 
     def test_write_fields_rejects_unknown_key(self, tmp_path: Path) -> None:
@@ -549,9 +567,10 @@ class TestConfigStoreWrite:
         store = ConfigStore(tmp_path)
         with pytest.raises(ValueError, match="must target one file"):
             store.write_fields(
-                {"notify": "y", "vibe_tags": "[calm]"}, check=lambda fields: None
+                {"worker_repos": "/tmp/a", "vibe_tags": "[calm]"},
+                check=lambda fields: None,
             )
-        assert store.read_field("notify") is None
+        assert store.read_field("worker_repos") is None
         assert store.read_field("vibe_tags") is None
 
     def test_non_ascii_value_round_trips(self, tmp_path: Path) -> None:

@@ -14,7 +14,7 @@ _event=$(printf '%s' "$_stdin" | vox_hook_payload_field hook_event_name)
 # shellcheck source=plugin/hooks/repo-root.sh
 source "$(dirname "${BASH_SOURCE[0]}")/repo-root.sh" || exit 0
 _repo_root=$(vox_hook_repo_root "$_cwd") || exit 0
-[ -f "$_repo_root/.punt-labs/vox/enabled" ] || exit 0
+vox_hook_is_enabled "$_repo_root" || exit 0
 command -v vox >/dev/null 2>&1 || exit 0
 
 # Warnings ship to vox.log via the daemon; hook stderr is discarded by Claude Code.

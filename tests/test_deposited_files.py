@@ -70,5 +70,5 @@ def test_deposit_with_missing_asset_leaves_the_existing_deposit_intact(
         GuideStamp, "for_packaged_asset", lambda: _missing_asset(tmp_path)
     )
     with pytest.raises(OSError):
-        guide.deposit()
+        guide.deposit(refresh=True)
     assert guide.path.read_bytes() == before

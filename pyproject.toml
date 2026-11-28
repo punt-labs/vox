@@ -233,6 +233,7 @@ ignore = [
 "typings/*" = ["A002", "N818"]
 "src/punt_vox/__main__.py" = ["T20", "PLC0415", "S603", "C901"]
 "src/punt_vox/doctor.py" = ["PLC0415", "C901"]
+"src/punt_vox/enablement_state.py" = ["S603"]
 "src/punt_vox/doctor_mpv.py" = ["S603"]
 "src/punt_vox/server.py" = ["PLC0415", "C901"]
 "src/punt_vox/voxd/daemon.py" = ["PLC0415"]

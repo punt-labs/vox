@@ -38,8 +38,10 @@ class TestGuideCheck:
         repo = self._make_repo(tmp_path)
         with patch("punt_vox.doctor_guide.find_repo_root", return_value=repo):
             results = GuideCheck().run()
-        # vox not enabled here -- no deposited guide -- reported as N/A.
-        assert results == []
+        # Enablement status is reported even when no guide is deposited.
+        assert len(results) == 1
+        assert results[0].passed is True
+        assert "enablement: off" in results[0].message
 
     def test_agree_passes(self, tmp_path: Path) -> None:
         repo = self._make_repo(tmp_path)
@@ -53,9 +55,9 @@ class TestGuideCheck:
             patch.object(GuideStamp, "for_packaged_asset", return_value=stamp),
         ):
             results = GuideCheck().run()
-        assert len(results) == 1
-        assert results[0].passed is True
-        assert "up to date" in results[0].message
+        assert len(results) == 2
+        assert results[1].passed is True
+        assert "up to date" in results[1].message
 
     def test_diverge_fails(self, tmp_path: Path) -> None:
         repo = self._make_repo(tmp_path)
@@ -71,11 +73,11 @@ class TestGuideCheck:
             patch.object(GuideStamp, "for_packaged_asset", return_value=stamp),
         ):
             results = GuideCheck().run()
-        assert len(results) == 1
-        assert results[0].passed is False
-        assert results[0].symbol == "✗"
-        assert "out of date" in results[0].message
-        assert "vox enable" in results[0].message
+        assert len(results) == 2
+        assert results[1].passed is False
+        assert results[1].symbol == "✗"
+        assert "out of date" in results[1].message
+        assert "vox enable --refresh" in results[1].message
 
     def test_absent_stamp_warns_and_does_not_pass(self, tmp_path: Path) -> None:
         repo = self._make_repo(tmp_path)
@@ -90,11 +92,11 @@ class TestGuideCheck:
             patch.object(GuideStamp, "for_packaged_asset", return_value=stamp),
         ):
             results = GuideCheck().run()
-        assert len(results) == 1
-        assert results[0].passed is False
-        assert results[0].symbol == "⚠"
-        assert "unstamped" in results[0].message
-        assert "vox enable" in results[0].message
+        assert len(results) == 2
+        assert results[1].passed is False
+        assert results[1].symbol == "⚠"
+        assert "unstamped" in results[1].message
+        assert "vox enable --refresh" in results[1].message
 
     def test_unreadable_deposit_falls_to_absent_stamp(self, tmp_path: Path) -> None:
         # A deposit whose bytes cannot be decoded (a corrupt or truncated
@@ -111,9 +113,9 @@ class TestGuideCheck:
             patch.object(GuideStamp, "for_packaged_asset", return_value=stamp),
         ):
             results = GuideCheck().run()
-        assert len(results) == 1
-        assert results[0].symbol == "⚠"
-        assert "unstamped" in results[0].message
+        assert len(results) == 2
+        assert results[1].symbol == "⚠"
+        assert "unstamped" in results[1].message
 
     def test_missing_asset_is_a_fail_row_not_a_crash(self, tmp_path: Path) -> None:
         # A broken install (asset deleted) must surface as its own fail row; an
@@ -130,9 +132,9 @@ class TestGuideCheck:
             patch.object(GuideStamp, "for_packaged_asset", return_value=stamp),
         ):
             results = GuideCheck().run()
-        assert len(results) == 1
-        assert results[0].symbol == "✗"
-        assert results[0].message == (
+        assert len(results) == 2
+        assert results[1].symbol == "✗"
+        assert results[1].message == (
             "deposited guide: packaged asset unreadable "
             "(no such file or directory) — reinstall punt-vox"
         )
@@ -153,9 +155,9 @@ class TestGuideCheck:
             patch.object(Path, "read_bytes", raise_permission),
         ):
             results = GuideCheck().run()
-        assert len(results) == 1
-        assert results[0].symbol == "✗"
-        assert "packaged asset unreadable (permission denied)" in results[0].message
+        assert len(results) == 2
+        assert results[1].symbol == "✗"
+        assert "packaged asset unreadable (permission denied)" in results[1].message
 
     def test_asset_failure_names_no_host_path(self, tmp_path: Path) -> None:
         # Doctor emits verdicts, never host locations: the asset row carries
@@ -173,7 +175,7 @@ class TestGuideCheck:
             patch.object(GuideStamp, "for_packaged_asset", return_value=stamp),
         ):
             results = GuideCheck().run()
-        assert str(packaged) not in results[0].message
+        assert str(packaged) not in results[1].message
 
     def test_missing_asset_wins_over_an_unstamped_deposit(self, tmp_path: Path) -> None:
         # A missing packaged asset is an installation fault: advising vox enable would
@@ -190,10 +192,10 @@ class TestGuideCheck:
             patch.object(GuideStamp, "for_packaged_asset", return_value=stamp),
         ):
             results = GuideCheck().run()
-        assert len(results) == 1
-        assert results[0].symbol == "✗"
-        assert "packaged asset unreadable" in results[0].message
-        assert "unstamped" not in results[0].message
+        assert len(results) == 2
+        assert results[1].symbol == "✗"
+        assert "packaged asset unreadable" in results[1].message
+        assert "unstamped" not in results[1].message
 
     def test_is_file_oserror_reports_not_applicable(self, tmp_path: Path) -> None:
         # A rare failure of ``is_file`` (permission-denied on the parent, a
@@ -210,4 +212,5 @@ class TestGuideCheck:
             patch.object(Path, "is_file", raise_permission),
         ):
             results = GuideCheck().run()
-        assert results == []
+        assert len(results) == 1
+        assert "enablement: off" in results[0].message

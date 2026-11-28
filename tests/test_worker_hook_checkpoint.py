@@ -1088,9 +1088,6 @@ def test_hook_sender_does_not_open_the_worker_registry(tmp_path: Path) -> None:
             side_effect=AssertionError("hook sender opened worker records"),
         ),
         patch("punt_vox.hook_context_admission.find_repo_root", return_value=tmp_path),
-        patch(
-            "punt_vox.hook_context_admission.VoxMarker.is_present", return_value=False
-        ),
     ):
         assert not HookContextRelay(
             {"session_id": "unknown", "cwd": str(tmp_path)}

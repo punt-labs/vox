@@ -67,15 +67,21 @@ class SettingsRegistration:
         return self
 
     @property
+    def path(self) -> Path:
+        """Return the settings file path."""
+        return self._path
+
+    @property
     def rules(self) -> Mapping[str, tuple[str, ...]]:
         """Return the rules this instance owns, keyed by ``permissions`` tier."""
         return self._rules
 
     def register(self) -> bool:
-        """Add each owned rule to its tier if absent. Return whether changed.
+        """Add each owned rule to its tier in sorted position if absent.
 
-        Order-preserving and idempotent: an entry already present is skipped, so a
-        re-run of ``enable`` adds nothing and rewrites nothing.
+        Order-preserving and idempotent: an entry already present is skipped,
+        existing entries are never moved, and each missing entry is inserted
+        before the first existing entry that sorts after it (TED-25).
         """
         return self._rewrite(self._with_entries)
 
@@ -89,8 +95,17 @@ class SettingsRegistration:
 
     @staticmethod
     def _with_entries(current: list[str], owned: tuple[str, ...]) -> list[str]:
-        """Return *current* with each missing owned rule appended in order."""
-        return current + [entry for entry in owned if entry not in current]
+        """Return *current* with each missing owned rule inserted in sorted order."""
+        result = list(current)
+        for entry in sorted(owned):
+            if entry in result:
+                continue
+            idx = next(
+                (i for i, existing in enumerate(result) if existing > entry),
+                len(result),
+            )
+            result.insert(idx, entry)
+        return result
 
     @staticmethod
     def _without_entries(current: list[str], owned: tuple[str, ...]) -> list[str]:
