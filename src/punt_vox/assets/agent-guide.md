@@ -23,16 +23,31 @@ push and pop is lost or must be redone.
 
 ## Enabling vox in a repo
 
-Vox is per-repo: it chimes and narrates only where a human ran `enable` and
-committed the `.punt-labs/vox/enabled` marker.
+Vox is per-repo and off by default: hooks do nothing and `mic` MCP tools (other
+than `mic:enablement` and `mic:status`) stay dormant until enabled.
 
-- `mic:enablement action="enable"` (or `/vox enable`) — turn vox on for this repo:
-  deposit the guide, write the marker, add the `@`-import, register settings.
-  Idempotent; re-running upgrades the deposited guide.
-- `mic:enablement action="disable"` (or `/vox disable`) — turn it off: remove the
-  import, marker, and settings. The `.punt-labs/vox/` subtree is left dormant.
-- CLI equivalent: `vox enable` / `vox disable` (`vox disable --purge` also
-  removes the subtree). Neither surface runs git — commit the marker via a PR.
+- `mic:enablement action="enable" scope="local"` (or `/vox enable`, default) —
+  turn vox on for you in this checkout: deposit `.punt-labs/local/vox/CLAUDE.md`
+  (when absent), write `.punt-labs/local/vox/enabled`, add the `@`-import to
+  `CLAUDE.local.md`, and register grants in `.claude/settings.local.json`.
+  All personal paths are gitignored.
+- `mic:enablement action="enable" scope="project"` (or `/vox enable project`) —
+  turn vox on for the whole repository in `.punt-labs/vox/`, `CLAUDE.md`, and
+  `.claude/settings.json`. Commit the marker via a PR.
+- Refresh the deposited guide explicitly with `refresh=true` (`vox enable --refresh`);
+  plain `enable` leaves an existing guide untouched.
+- `mic:enablement action="disable"` (or `/vox disable`) — turn vox off for the
+  chosen scope (default `local`). In a project-enabled repo, local disable
+  writes `.punt-labs/local/vox/disabled` (the shared guide still loads in
+  Claude Code, while hooks and MCP tools stay off).
+- `vox disable --scope project --opt-out` commits `.punt-labs/vox/opt-out`,
+  which refuses `enable` in either scope until cleared with
+  `vox enable --scope project --clear-opt-out`.
+- Personal preferences (`notify`, `speak`, `voice`, `provider`, `model`) write
+  to gitignored `.punt-labs/vox/vox.local.md`, never tracked `vox.md`.
+- CLI equivalent: `vox enable [--scope local|project] [--refresh]` /
+  `vox disable [--scope local|project] [--purge] [--opt-out]`. Neither surface
+  runs git.
 
 ## Speaking
 

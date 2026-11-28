@@ -15,13 +15,10 @@ from typing import TYPE_CHECKING, final
 
 import pytest
 
-from punt_vox.audible_notify import AudibleNotify
 from punt_vox.claude_md import ClaudeMdImport
 from punt_vox.client_errors import VoxdConnectionError
 from punt_vox.config import ConfigStore
-from punt_vox.deposited_files import DepositedGuide, VoxMarker
 from punt_vox.enablement import RepoEnablement
-from punt_vox.gitignore_entry import VoxGitignore
 from punt_vox.guide_stamp import GuideStamp
 from punt_vox.hook_payload import StopPayload
 from punt_vox.hooks import handle_stop
@@ -73,7 +70,7 @@ def _assert_biconditional(repo: Path) -> None:
 
 
 def test_enable_reaches_enabled(tmp_path: Path) -> None:
-    enablement = RepoEnablement.for_repo(tmp_path)
+    enablement = RepoEnablement.for_repo(tmp_path, scope="project")
     enablement.enable()
     assert _marker_present(tmp_path)
     assert _import_count(tmp_path) == 1
@@ -81,7 +78,7 @@ def test_enable_reaches_enabled(tmp_path: Path) -> None:
     assert enablement.import_line in host_rules
 
 
-_LOCAL_IGNORE = ".punt-labs/vox/vox.local.md"
+_LOCAL_IGNORE = ".punt-labs/**/*.local.*"
 
 
 def _ignore_count(repo: Path) -> int:
@@ -90,14 +87,14 @@ def _ignore_count(repo: Path) -> int:
 
 
 def test_enable_gitignores_local_config(tmp_path: Path) -> None:
-    RepoEnablement.for_repo(tmp_path).enable()
+    RepoEnablement.for_repo(tmp_path, scope="project").enable()
     assert _ignore_count(tmp_path) == 1
 
 
 @pytest.mark.subprocess
 def test_enable_keeps_runtime_locks_out_of_git_status(tmp_path: Path) -> None:
     subprocess.run(["git", "init", "--quiet", "--template="], cwd=tmp_path, check=True)
-    RepoEnablement.for_repo(tmp_path).enable()
+    RepoEnablement.for_repo(tmp_path, scope="project").enable()
     _config_store(tmp_path).write_field("vibe", "[focused]")
     (tmp_path / "example.lock").touch()
 
@@ -121,7 +118,6 @@ def test_enable_keeps_runtime_locks_out_of_git_status(tmp_path: Path) -> None:
         ".gitignore",
         ".punt-labs/vox/CLAUDE.md",
         ".punt-labs/vox/enabled",
-        ".punt-labs/vox/vox.md",
         "CLAUDE.md",
         "example.lock",
     }
@@ -129,7 +125,7 @@ def test_enable_keeps_runtime_locks_out_of_git_status(tmp_path: Path) -> None:
 
 def test_enable_keeps_user_gitignore_and_adds_no_duplicate(tmp_path: Path) -> None:
     (tmp_path / ".gitignore").write_text("node_modules/\n", encoding="utf-8")
-    enablement = RepoEnablement.for_repo(tmp_path)
+    enablement = RepoEnablement.for_repo(tmp_path, scope="project")
     enablement.enable()
     enablement.enable()
     text = (tmp_path / ".gitignore").read_text(encoding="utf-8")
@@ -137,8 +133,9 @@ def test_enable_keeps_user_gitignore_and_adds_no_duplicate(tmp_path: Path) -> No
         "node_modules/",
         _LOCAL_IGNORE,
         ".punt-labs/local/",
-        "/.CLAUDE.md.punt-import.lock",
-        "/.claude/.settings.json.punt-import.lock",
+        "CLAUDE.local.md",
+        ".claude/settings.local.json",
+        ".*.punt-import.lock",
     ]
 
 
@@ -148,7 +145,7 @@ def test_enable_stops_without_modifying_an_unreadable_gitignore(tmp_path: Path) 
     gitignore.write_bytes(original)
 
     with pytest.raises(UnicodeDecodeError):
-        RepoEnablement.for_repo(tmp_path).enable()
+        RepoEnablement.for_repo(tmp_path, scope="project").enable()
 
     assert gitignore.read_bytes() == original
     assert not (tmp_path / "CLAUDE.md").exists()
@@ -157,7 +154,7 @@ def test_enable_stops_without_modifying_an_unreadable_gitignore(tmp_path: Path) 
 
 
 def test_disable_leaves_gitignore_entry(tmp_path: Path) -> None:
-    enablement = RepoEnablement.for_repo(tmp_path)
+    enablement = RepoEnablement.for_repo(tmp_path, scope="project")
     enablement.enable()
     enablement.disable()
     assert _ignore_count(tmp_path) == 1
@@ -175,7 +172,7 @@ def test_enable_writes_repo_scope_only(
     repo.mkdir()
     monkeypatch.setattr(Path, "home", lambda: home)
 
-    RepoEnablement.for_repo(repo).enable()
+    RepoEnablement.for_repo(repo, scope="project").enable()
 
     assert _import_count(repo) == 1
     assert not (home / ".claude" / "CLAUDE.md").exists()
@@ -183,7 +180,7 @@ def test_enable_writes_repo_scope_only(
 
 
 def test_enable_registers_settings(tmp_path: Path) -> None:
-    RepoEnablement.for_repo(tmp_path).enable()
+    RepoEnablement.for_repo(tmp_path, scope="project").enable()
     settings = tmp_path / ".claude" / "settings.json"
     data = json.loads(settings.read_text(encoding="utf-8"))
     assert "Bash(vox:*)" in data["permissions"]["allow"]
@@ -191,7 +188,7 @@ def test_enable_registers_settings(tmp_path: Path) -> None:
 
 
 def test_enable_is_idempotent_no_second_import(tmp_path: Path) -> None:
-    enablement = RepoEnablement.for_repo(tmp_path)
+    enablement = RepoEnablement.for_repo(tmp_path, scope="project")
     enablement.enable()
     enablement.enable()
     enablement.enable()
@@ -211,14 +208,14 @@ def test_enable_leaves_repo_audible(tmp_path: Path) -> None:
     # notify level so the notify-gated hooks fire. Without it the marker gate
     # passes yet handle_stop skips on notify=n, and the repo is silent -- audibly
     # identical to disabled.
-    RepoEnablement.for_repo(tmp_path).enable()
+    RepoEnablement.for_repo(tmp_path, scope="project").enable()
     assert _config_store(tmp_path).read().notify == "y"
 
 
 def test_enable_makes_handle_stop_fire_in_enabled_repo(tmp_path: Path) -> None:
     # End-to-end: after enable, the stop hook returns a decision-block (speak),
     # not None. This is the audible outcome a user hears on task completion.
-    RepoEnablement.for_repo(tmp_path).enable()
+    RepoEnablement.for_repo(tmp_path, scope="project").enable()
     config = _config_store(tmp_path).read()
     result = handle_stop(
         StopPayload(stop_hook_active=False), config, tmp_path / ".punt-labs" / "vox"
@@ -230,7 +227,7 @@ def test_enable_makes_handle_stop_fire_in_enabled_repo(tmp_path: Path) -> None:
 def test_enable_preserves_a_continuous_level(tmp_path: Path) -> None:
     # The upgrade path must not downgrade a user's continuous choice back to
     # normal: a re-enable over notify=c leaves it continuous.
-    enablement = RepoEnablement.for_repo(tmp_path)
+    enablement = RepoEnablement.for_repo(tmp_path, scope="project")
     enablement.enable()
     _config_store(tmp_path).write_field("notify", "c")
     enablement.enable()
@@ -240,7 +237,7 @@ def test_enable_preserves_a_continuous_level(tmp_path: Path) -> None:
 def test_disable_closes_the_gate(tmp_path: Path) -> None:
     # Silence is disable, not notify=n: after disable the marker is gone, so the
     # hook gate is closed regardless of the (dormant) notify value.
-    enablement = RepoEnablement.for_repo(tmp_path)
+    enablement = RepoEnablement.for_repo(tmp_path, scope="project")
     enablement.enable()
     enablement.disable()
     assert not _marker_present(tmp_path)
@@ -249,7 +246,7 @@ def test_disable_closes_the_gate(tmp_path: Path) -> None:
 def test_enable_preserves_user_prose_in_claude_md(tmp_path: Path) -> None:
     host = tmp_path / "CLAUDE.md"
     host.write_text("# My rules\n\nKeep me.\n", encoding="utf-8")
-    RepoEnablement.for_repo(tmp_path).enable()
+    RepoEnablement.for_repo(tmp_path, scope="project").enable()
     text = host.read_text(encoding="utf-8")
     assert text == f"# My rules\n\nKeep me.\n{_IMPORT}\n"
 
@@ -260,7 +257,7 @@ def test_enable_preserves_user_prose_in_claude_md(tmp_path: Path) -> None:
 
 
 def test_disable_removes_import_and_marker(tmp_path: Path) -> None:
-    enablement = RepoEnablement.for_repo(tmp_path)
+    enablement = RepoEnablement.for_repo(tmp_path, scope="project")
     enablement.enable()
     enablement.disable()
     assert not _marker_present(tmp_path)
@@ -269,7 +266,7 @@ def test_disable_removes_import_and_marker(tmp_path: Path) -> None:
 
 
 def test_disable_leaves_the_directory_dormant(tmp_path: Path) -> None:
-    enablement = RepoEnablement.for_repo(tmp_path)
+    enablement = RepoEnablement.for_repo(tmp_path, scope="project")
     enablement.enable()
     enablement.disable()
     # dirPresent' = dirPresent: enable created the dir, disable leaves it (Dormant).
@@ -278,7 +275,7 @@ def test_disable_leaves_the_directory_dormant(tmp_path: Path) -> None:
 
 
 def test_disable_deregisters_settings(tmp_path: Path) -> None:
-    enablement = RepoEnablement.for_repo(tmp_path)
+    enablement = RepoEnablement.for_repo(tmp_path, scope="project")
     enablement.enable()
     enablement.disable()
     data = json.loads((tmp_path / ".claude" / "settings.json").read_text("utf-8"))
@@ -288,7 +285,7 @@ def test_disable_deregisters_settings(tmp_path: Path) -> None:
 def test_disable_on_absent_repo_does_not_create_a_directory(tmp_path: Path) -> None:
     # Disable's frame: run on an already-Absent repo, it must not conjure an empty
     # .punt-labs/vox/ (a spurious Dormant state) -- dirPresent' = dirPresent.
-    RepoEnablement.for_repo(tmp_path).disable()
+    RepoEnablement.for_repo(tmp_path, scope="project").disable()
     assert not _dir_present(tmp_path)
     assert not _marker_present(tmp_path)
     _assert_biconditional(tmp_path)
@@ -300,7 +297,7 @@ def test_disable_on_absent_repo_does_not_create_a_directory(tmp_path: Path) -> N
 
 
 def test_purge_removes_the_subtree_and_the_import(tmp_path: Path) -> None:
-    enablement = RepoEnablement.for_repo(tmp_path)
+    enablement = RepoEnablement.for_repo(tmp_path, scope="project")
     enablement.enable()
     enablement.purge()
     assert not _dir_present(tmp_path)
@@ -313,7 +310,7 @@ def test_purge_leaves_no_orphan_import(tmp_path: Path) -> None:
     # The load-bearing no-orphan property: purge must remove the import (which
     # lives in CLAUDE.md, OUTSIDE the subtree) before deleting the guide file it
     # points at. A subtree-only purge would leave a 404ing @-import.
-    enablement = RepoEnablement.for_repo(tmp_path)
+    enablement = RepoEnablement.for_repo(tmp_path, scope="project")
     enablement.enable()
     enablement.purge()
     guide = tmp_path / ".punt-labs" / "vox" / "CLAUDE.md"
@@ -325,7 +322,7 @@ def test_purge_leaves_no_orphan_import(tmp_path: Path) -> None:
 def test_purge_preserves_user_prose(tmp_path: Path) -> None:
     host = tmp_path / "CLAUDE.md"
     host.write_text("# Rules\n\nKeep me.\n", encoding="utf-8")
-    enablement = RepoEnablement.for_repo(tmp_path)
+    enablement = RepoEnablement.for_repo(tmp_path, scope="project")
     enablement.enable()
     enablement.purge()
     assert host.read_text(encoding="utf-8") == "# Rules\n\nKeep me.\n"
@@ -335,7 +332,7 @@ def test_purge_absent_repo_keeps_existing_gitignore(tmp_path: Path) -> None:
     gitignore = tmp_path / ".gitignore"
     gitignore.write_bytes(b"dist/\n")
 
-    RepoEnablement.for_repo(tmp_path).purge()
+    RepoEnablement.for_repo(tmp_path, scope="project").purge()
 
     assert not _dir_present(tmp_path)
     assert gitignore.read_bytes() == b"dist/\n"
@@ -347,7 +344,7 @@ def test_purge_absent_repo_keeps_existing_gitignore(tmp_path: Path) -> None:
 
 
 def test_biconditional_holds_across_the_state_walk(tmp_path: Path) -> None:
-    enablement = RepoEnablement.for_repo(tmp_path)
+    enablement = RepoEnablement.for_repo(tmp_path, scope="project")
     _assert_biconditional(tmp_path)  # Absent
     enablement.enable()
     _assert_biconditional(tmp_path)  # Enabled
@@ -364,7 +361,7 @@ def test_disable_heals_a_racing_writers_duplicate(tmp_path: Path) -> None:
     # disable removes every match, restoring the biconditional.
     host = tmp_path / "CLAUDE.md"
     host.write_text(f"# rules\n{_IMPORT}\nmore\n{_IMPORT}\n", encoding="utf-8")
-    RepoEnablement.for_repo(tmp_path).disable()
+    RepoEnablement.for_repo(tmp_path, scope="project").disable()
     assert _import_count(tmp_path) == 0
 
 
@@ -395,7 +392,7 @@ def _assert_partial_enable_writes_no_marker(
     """
     monkeypatch.setattr(target, method, _raise_oserror)
     with pytest.raises(OSError, match="simulated step failure"):
-        RepoEnablement.for_repo(tmp_path).enable()
+        RepoEnablement.for_repo(tmp_path, scope="project").enable()
     assert not _marker_present(tmp_path)
 
 
@@ -422,7 +419,7 @@ def test_enable_with_missing_guide_asset_names_the_reinstall_and_writes_no_marke
     missing = GuideStamp(tmp_path / "site-packages" / "agent-guide.md")
     monkeypatch.setattr(GuideStamp, "for_packaged_asset", lambda: missing)
     with pytest.raises(OSError, match="reinstall punt-vox"):
-        RepoEnablement.for_repo(tmp_path).enable()
+        RepoEnablement.for_repo(tmp_path, scope="project").enable()
     assert not _marker_present(tmp_path)
     assert not (tmp_path / "CLAUDE.md").exists()
 
@@ -432,7 +429,7 @@ def test_enable_refuses_an_unclosed_fence_before_granting(tmp_path: Path) -> Non
     host.write_text("```text\nnever closed\n", encoding="utf-8")
 
     with pytest.raises(ValueError, match="unclosed code fence"):
-        RepoEnablement.for_repo(tmp_path).enable()
+        RepoEnablement.for_repo(tmp_path, scope="project").enable()
 
     assert not (tmp_path / ".claude" / "settings.json").exists()
     assert not _marker_present(tmp_path)
@@ -459,7 +456,7 @@ def test_enable_refuses_symlink_at_marker_path_leaving_target_intact(
     (vox / "enabled").symlink_to(secret)
 
     with pytest.raises(ValueError, match="symlink at a tool-owned path"):
-        RepoEnablement.for_repo(tmp_path).enable()
+        RepoEnablement.for_repo(tmp_path, scope="project").enable()
 
     assert (vox / "enabled").is_symlink()
     assert secret.read_text(encoding="utf-8") == "PRIVATE KEY\n"
@@ -480,7 +477,7 @@ def test_enable_refuses_symlink_at_guide_path_leaving_target_intact(
     (vox / "CLAUDE.md").symlink_to(secret)
 
     with pytest.raises(ValueError, match="symlink at a tool-owned path"):
-        RepoEnablement.for_repo(tmp_path).enable()
+        RepoEnablement.for_repo(tmp_path, scope="project").enable()
 
     assert (vox / "CLAUDE.md").is_symlink()
     assert secret.read_text(encoding="utf-8") == "PRIVATE KEY\n"
@@ -488,7 +485,7 @@ def test_enable_refuses_symlink_at_guide_path_leaving_target_intact(
 
 
 def test_root_property_reports_the_repo_root(tmp_path: Path) -> None:
-    assert RepoEnablement.for_repo(tmp_path).root == tmp_path
+    assert RepoEnablement.for_repo(tmp_path, scope="project").root == tmp_path
 
 
 # ---------------------------------------------------------------------------
@@ -571,88 +568,12 @@ def _fake_factory(
     return factory
 
 
-def _wire_enablement(
-    tmp_path: Path,
-    client: _FakeClient | _ConnectionErrorClient,
-) -> RepoEnablement:
-    """Build a :class:`RepoEnablement` bound to *tmp_path* with a fake daemon.
-
-    Wires the seven collaborators the way ``for_repo`` would but with the
-    proposal collaborator pointed at the test double, so the enable
-    flow exercises the real file operations against ``tmp_path`` and
-    the fake WebSocket boundary at once.
-    """
-    vox_dir = tmp_path / ".punt-labs" / "vox"
-    proposal = ProviderProposal(
-        ConfigStore(vox_dir), client_factory=_fake_factory(client)
-    )
-    return RepoEnablement(
-        import_writer=ClaudeMdImport(tmp_path / "CLAUDE.md", _IMPORT),
-        marker=VoxMarker(vox_dir / "enabled", tmp_path),
-        guide=DepositedGuide(vox_dir / "CLAUDE.md", tmp_path),
-        settings=SettingsRegistration(tmp_path / ".claude" / "settings.json"),
-        audible=AudibleNotify(vox_dir),
-        proposal=proposal,
-        gitignore=VoxGitignore(tmp_path),
-    )
-
-
-def _repo_with_daemon(tmp_path: Path, payload: ProviderStatusPayload) -> RepoEnablement:
-    """Build a :class:`RepoEnablement` whose proposal uses a canned reply."""
-    return _wire_enablement(tmp_path, _FakeClient(payload))
-
-
-def test_enable_writes_the_daemon_s_preferred_provider(tmp_path: Path) -> None:
-    """After enable, ``vox.md`` names the provider the daemon proposed."""
-    payload = ProviderStatusPayload(
-        (ProviderReadiness(name="elevenlabs", ready=True, reason="ok", detail=""),),
-        preferred="elevenlabs",
-    )
-    outcome = _repo_with_daemon(tmp_path, payload).enable()
-    assert outcome.reason == "written"
-    assert outcome.provider_written == "elevenlabs"
-    assert _config_store(tmp_path).read().provider == "elevenlabs"
-
-
-def test_enable_does_not_read_its_own_environment(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The client process's env must not influence enable's proposal.
-
-    Doctor reads provider readiness from the daemon environment, which can
-    differ from the caller's shell environment.
-    """
-    monkeypatch.setenv("ELEVENLABS_API_KEY", "sk-client-side")
-    monkeypatch.setenv("TTS_PROVIDER", "openai")
-    payload = ProviderStatusPayload(
-        (ProviderReadiness(name="polly", ready=True, reason="ok", detail=""),),
-        preferred="polly",
-    )
-    outcome = _repo_with_daemon(tmp_path, payload).enable()
-    assert outcome.provider_written == "polly"
-    assert _config_store(tmp_path).read().provider == "polly"
-
-
-def test_enable_writes_nothing_when_voxd_is_unreachable(tmp_path: Path) -> None:
-    """Marker, guide, settings still land; no provider is written; reply names it."""
-    enablement = _wire_enablement(tmp_path, _ConnectionErrorClient())
-    outcome = enablement.enable()
-    assert outcome.reason == "voxd_unavailable"
-    assert outcome.provider_written is None
-    assert "voxd is not reachable" in outcome.detail
-    # The rest of enable STILL lands -- the marker, the guide, the settings.
-    assert _marker_present(tmp_path)
-    assert (tmp_path / ".punt-labs" / "vox" / "CLAUDE.md").is_file()
-    assert _config_store(tmp_path).read().provider is None
-
-
-def test_enable_writes_nothing_when_no_provider_is_ready(tmp_path: Path) -> None:
-    """``preferred is None`` from the daemon reports; it does not silently write."""
-    payload = ProviderStatusPayload(providers=(), preferred=None)
-    outcome = _repo_with_daemon(tmp_path, payload).enable()
-    assert outcome.reason == "no_ready_provider"
-    assert outcome.provider_written is None
-    assert _config_store(tmp_path).read().provider is None
+def test_enable_does_not_write_vox_md_or_personal_prefs(tmp_path: Path) -> None:
+    """Enable never writes personal prefs (notify, provider) into tracked vox.md."""
+    RepoEnablement.for_repo(tmp_path, scope="project").enable()
+    assert not (tmp_path / ".punt-labs" / "vox" / "vox.md").exists()
+    assert not (tmp_path / ".punt-labs" / "vox" / "vox.local.md").exists()
+    assert _config_store(tmp_path).read().notify == "y"
 
 
 def test_enable_reports_write_failed_distinct_from_voxd_unavailable(
@@ -684,47 +605,19 @@ def test_enable_reports_write_failed_distinct_from_voxd_unavailable(
     assert "disk write refused" in outcome.detail
 
 
-def test_enable_does_not_overwrite_a_declared_provider(tmp_path: Path) -> None:
-    """A repo whose ``vox.md`` already declares a provider is left alone.
-
-    Enable's proposal is one-shot: a human's declared choice (or a
-    previous enable's write) is preserved.  Re-running enable takes the
-    ``already_set`` branch, so an upgrade path does not thrash the
-    committed value.
-    """
-    # First enable writes elevenlabs.
-    payload = ProviderStatusPayload(
-        (ProviderReadiness(name="elevenlabs", ready=True, reason="ok", detail=""),),
-        preferred="elevenlabs",
-    )
-    _repo_with_daemon(tmp_path, payload).enable()
-    assert _config_store(tmp_path).read().provider == "elevenlabs"
-
-    # Second enable -- daemon would propose polly, but the file already says
-    # elevenlabs.  Verify we take the ``already_set`` branch.
-    second_payload = ProviderStatusPayload(
-        (ProviderReadiness(name="polly", ready=True, reason="ok", detail=""),),
-        preferred="polly",
-    )
-    outcome = _repo_with_daemon(tmp_path, second_payload).enable()
-    assert outcome.reason == "already_set"
-    assert outcome.provider_written is None
-    assert _config_store(tmp_path).read().provider == "elevenlabs"
-
-
 def test_marker_content_is_deterministic(tmp_path: Path) -> None:
     # The marker bytes must be identical everywhere so the CLI and MCP surfaces
     # write the same file (§ 2.14). Two independent enables produce equal bytes.
     other = tmp_path / "other"
     other.mkdir()
-    RepoEnablement.for_repo(tmp_path).enable()
-    RepoEnablement.for_repo(other).enable()
+    RepoEnablement.for_repo(tmp_path, scope="project").enable()
+    RepoEnablement.for_repo(other, scope="project").enable()
     a = (tmp_path / ".punt-labs" / "vox" / "enabled").read_bytes()
     b = (other / ".punt-labs" / "vox" / "enabled").read_bytes()
     assert a == b
 
 
 def test_enable_leaves_no_gitignore_lock_in_repo_root(tmp_path: Path) -> None:
-    RepoEnablement.for_repo(tmp_path).enable()
+    RepoEnablement.for_repo(tmp_path, scope="project").enable()
     root_locks = [p.name for p in tmp_path.glob("*.lock")]
     assert not [name for name in root_locks if "gitignore" in name]

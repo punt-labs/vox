@@ -10,6 +10,7 @@ from typer.testing import CliRunner
 
 from punt_vox.__main__ import app
 from punt_vox.enablement import RepoEnablement
+from punt_vox.enablement_state import EffectiveEnablement, EnablementScope
 from punt_vox.server_enablement import EnablementTool
 
 if TYPE_CHECKING:
@@ -19,7 +20,10 @@ _IMPORT = "@.punt-labs/vox/CLAUDE.md"
 
 
 def _tool(repo: Path) -> EnablementTool:
-    return EnablementTool(lambda: RepoEnablement.for_repo(repo))
+    def _factory(scope: EnablementScope = "local") -> RepoEnablement:
+        return RepoEnablement.for_repo(repo, scope=scope)
+
+    return EnablementTool(_factory)
 
 
 def _marker(repo: Path) -> Path:
@@ -27,7 +31,7 @@ def _marker(repo: Path) -> Path:
 
 
 def test_enable_action_writes_marker_and_import(tmp_path: Path) -> None:
-    reply = json.loads(_tool(tmp_path).dispatch("enable"))
+    reply = json.loads(_tool(tmp_path).dispatch("enable", scope="project"))
     assert reply["action"] == "enable"
     assert reply["enabled"] is True
     assert reply["repo"] == str(tmp_path)
@@ -37,8 +41,8 @@ def test_enable_action_writes_marker_and_import(tmp_path: Path) -> None:
 
 def test_disable_action_removes_marker_and_import(tmp_path: Path) -> None:
     tool = _tool(tmp_path)
-    tool.dispatch("enable")
-    reply = json.loads(tool.dispatch("disable"))
+    tool.dispatch("enable", scope="project")
+    reply = json.loads(tool.dispatch("disable", scope="project"))
     assert reply["action"] == "disable"
     assert reply["enabled"] is False
     assert not _marker(tmp_path).is_file()
@@ -54,7 +58,7 @@ def test_invalid_action_is_a_clean_error_object(tmp_path: Path) -> None:
 
 
 def test_outside_a_repo_is_a_clean_error_object() -> None:
-    def raiser() -> RepoEnablement:
+    def raiser(_scope: EnablementScope = "local") -> RepoEnablement:
         raise ValueError("not inside a git repository")
 
     reply = json.loads(EnablementTool(raiser).dispatch("enable"))
@@ -68,11 +72,16 @@ def test_enable_oserror_is_a_clean_error_object(
     # A filesystem failure inside enable() (permission-denied, ENOSPC, a racing
     # removal) must be reported as an error object, never raised across the tool
     # boundary.
-    def boom(_self: RepoEnablement) -> None:
+    def boom(
+        _self: RepoEnablement,
+        *,
+        refresh: bool = False,
+        clear_opt_out: bool = False,
+    ) -> EffectiveEnablement:
         raise OSError("permission denied")
 
     monkeypatch.setattr(RepoEnablement, "enable", boom)
-    reply = json.loads(_tool(tmp_path).dispatch("enable"))
+    reply = json.loads(_tool(tmp_path).dispatch("enable", scope="project"))
     assert "error" in reply
     assert "permission denied" in reply["error"]
     assert not _marker(tmp_path).is_file()
@@ -86,7 +95,7 @@ def test_malformed_settings_json_is_a_clean_error_object(tmp_path: Path) -> None
     settings.parent.mkdir(parents=True)
     settings.write_text('{"permissions": "not-an-object"}', encoding="utf-8")
 
-    reply = json.loads(_tool(tmp_path).dispatch("enable"))
+    reply = json.loads(_tool(tmp_path).dispatch("enable", scope="project"))
     assert "error" in reply
     assert "permissions must be a JSON object" in reply["error"]
     # enable() writes the marker last, so an abort on the settings step leaves the
@@ -105,7 +114,7 @@ def test_enable_symlinked_marker_is_a_clean_error_object(tmp_path: Path) -> None
     vox.mkdir(parents=True)
     (vox / "enabled").symlink_to(secret)
 
-    reply = json.loads(_tool(tmp_path).dispatch("enable"))
+    reply = json.loads(_tool(tmp_path).dispatch("enable", scope="project"))
     assert "error" in reply
     assert "symlink at a tool-owned path" in reply["error"]
     assert (vox / "enabled").is_symlink()
@@ -118,13 +127,13 @@ def test_disable_reports_observed_state_not_intent(
     # "enabled" reports the observed marker state, not the action's intent: a
     # disable that could not remove the marker must not claim the repo is off.
     tool = _tool(tmp_path)
-    tool.dispatch("enable")
+    tool.dispatch("enable", scope="project")
 
-    def noop(_self: RepoEnablement) -> None:
-        return None
+    def noop(_self: RepoEnablement, *, opt_out: bool = False) -> EffectiveEnablement:
+        return _self.effective_state
 
     monkeypatch.setattr(RepoEnablement, "disable", noop)
-    reply = json.loads(tool.dispatch("disable"))
+    reply = json.loads(tool.dispatch("disable", scope="project"))
     assert reply["action"] == "disable"
     # The marker still exists (disable was a no-op), so the observed state is on.
     assert reply["enabled"] is True
@@ -145,7 +154,7 @@ def test_cli_and_mcp_write_byte_identical_markers(
         return cli_repo
 
     monkeypatch.setattr("punt_vox.enablement.find_repo_root", fake_root)
-    CliRunner().invoke(app, ["enable"])
-    _tool(mcp_repo).dispatch("enable")
+    CliRunner().invoke(app, ["enable", "--scope", "project"])
+    _tool(mcp_repo).dispatch("enable", scope="project")
 
     assert _marker(cli_repo).read_bytes() == _marker(mcp_repo).read_bytes()

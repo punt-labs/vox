@@ -235,7 +235,8 @@ class TestWritableConfigDir:
             text=True,
         ).splitlines()
         assert (repo / DEFAULT_CONFIG_DIR / "vox.local.md").is_file()
-        assert status == ["?? .gitignore", "?? .punt-labs/vox/vox.md"]
+        assert not (repo / DEFAULT_CONFIG_DIR / "vox.md").exists()
+        assert status == ["?? .gitignore"]
         assert gitignore.read_text(encoding="utf-8").startswith(host_ignore)
 
     @pytest.mark.subprocess

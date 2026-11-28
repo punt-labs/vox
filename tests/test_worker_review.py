@@ -141,9 +141,6 @@ def test_managed_worker_hooks_need_no_repository_marker(tmp_path: Path) -> None:
     payload: dict[str, object] = {"session_id": record.id, "cwd": str(worktree)}
     with (
         patch("punt_vox.hook_context_admission.find_repo_root", return_value=worktree),
-        patch(
-            "punt_vox.hook_context_admission.VoxMarker.is_present", return_value=False
-        ),
     ):
         assert not HookContextRelay(payload).enabled()
         assert registry.admits_hook(record.id, str(worktree))
@@ -163,9 +160,6 @@ def test_invalid_managed_record_cannot_admit_hooks(tmp_path: Path, data: str) ->
     payload: dict[str, object] = {"session_id": record.id, "cwd": record.worktree}
     with (
         patch("punt_vox.hook_context_admission.find_repo_root", return_value=None),
-        patch(
-            "punt_vox.hook_context_admission.VoxMarker.is_present", return_value=False
-        ),
     ):
         assert not HookContextRelay(payload).enabled()
         assert not rebuilt.admits_hook(record.id, record.worktree)

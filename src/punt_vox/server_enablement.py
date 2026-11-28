@@ -1,11 +1,10 @@
-"""The ``mic`` enable/disable tool: one action-dispatched verb over enablement.
+"""The ``mic`` enable/disable tool: one scoped, action-dispatched verb.
 
-``tool-enable-disable.md`` § 2.14: the Claude Code surface writes the *same*
-``.punt-labs/vox/enabled`` marker the ``vox enable`` CLI writes -- one source of
-truth, two doors. The tool takes an ``action`` constrained to ``enable`` /
-``disable``. Enablement is repo file operations, not daemon-owned audio
-state, so this tool acts directly on :class:`~punt_vox.enablement.RepoEnablement`
-rather than routing through ``voxd``.
+``tool-enable-disable.md`` § 2.14 / TED-35: the Claude Code surface writes the
+*same* markers as the ``vox enable`` / ``vox disable`` CLI and takes the same
+``scope`` parameter (``"local"`` default, or ``"project"``). Enablement is repo
+file operations, not daemon-owned audio state, so this tool acts directly on
+:class:`~punt_vox.enablement.RepoEnablement`.
 """
 
 from __future__ import annotations
@@ -13,7 +12,14 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Literal, Self, final
 
-from punt_vox.enablement import EnableOutcome, RepoEnablement
+from mcp.types import TextContent
+
+from punt_vox.enablement import RepoEnablement
+from punt_vox.enablement_state import (
+    EffectiveEnablement,
+    EnablementScope,
+    EnablementState,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -21,92 +27,136 @@ if TYPE_CHECKING:
 __all__ = ["EnablementTool"]
 
 
+def _default_source(scope: EnablementScope) -> RepoEnablement:
+    return RepoEnablement.for_cwd(scope=scope)
+
+
 @final
 class EnablementTool:
-    """Route a ``mic`` enable/disable action to the per-repo enablement machine.
-
-    The enablement source is injected (defaulting to
-    :meth:`RepoEnablement.for_cwd`) so a test can bind a temp repo; production
-    discovers the repo from the daemon/session working directory.
-    """
+    """Route a ``mic`` enable/disable action to the per-repo enablement machine."""
 
     __slots__ = ("_source",)
 
-    _source: Callable[[], RepoEnablement]
+    _source: Callable[[EnablementScope], RepoEnablement]
 
     def __new__(
-        cls, source: Callable[[], RepoEnablement] = RepoEnablement.for_cwd
+        cls,
+        source: Callable[[EnablementScope], RepoEnablement] = _default_source,
     ) -> Self:
         """Create an enablement tool."""
         self = super().__new__(cls)
         self._source = source
         return self
 
-    def dispatch(self, action: Literal["enable", "disable"]) -> str:
+    def dispatch(
+        self,
+        action: Literal["enable", "disable"],
+        scope: EnablementScope = "local",
+        *,
+        refresh: bool = False,
+        opt_out: bool = False,
+        clear_opt_out: bool = False,
+    ) -> str:
         """Enable or disable vox in the repo the session runs from.
 
-        Returns a JSON object with the action, the repo root, the resulting
-        enabled state, the marker path, and -- on ``enable`` -- the outcome
-        of the daemon-proposal step (design §3.8): which provider was
-        written into ``vox.md``, or the reason nothing was written. A
-        working directory that is not inside a git repository is reported
-        as a clean ``error`` object, never an exception across the tool
-        boundary.
-
         Args:
-            action: ``"enable"`` writes the guide, marker, import, and settings,
-                asks the daemon for a preferred provider, and writes it to
-                ``vox.md`` when one was proposed and the repo did not already
-                declare one; ``"disable"`` removes the import, marker, and
-                settings, leaving the subtree dormant.
+            action: ``"enable"`` or ``"disable"``.
+            scope: ``"local"`` (personal, gitignored; default) or ``"project"``
+                (shared, committed).
+            refresh: When ``True`` on ``enable``, overwrite the deposited guide
+                from the installed package.
+            opt_out: When ``True`` on ``disable`` with ``scope="project"``,
+                write committed ``.punt-labs/vox/opt-out``.
+            clear_opt_out: When ``True`` on ``enable`` with ``scope="project"``,
+                remove ``.punt-labs/vox/opt-out`` and enable.
         """
         if action not in ("enable", "disable"):
             return self._error(f"invalid action '{action}'. Use enable or disable.")
+        if scope not in ("local", "project"):
+            return self._error(f"invalid scope '{scope}'. Use local or project.")
         try:
-            enablement = self._source()
+            enablement = self._source(scope)
         except ValueError as exc:
             return self._error(str(exc))
         try:
-            proposal = self._apply(enablement, action)
+            state = self._apply(
+                enablement,
+                action,
+                refresh=refresh,
+                opt_out=opt_out,
+                clear_opt_out=clear_opt_out,
+            )
         except (OSError, ValueError) as exc:
-            # A filesystem failure (permission-denied, ENOSPC, a racing removal) or
-            # a malformed .claude/settings.json (a ValueError from the settings
-            # guard) is a clean error object, never raised across the tool boundary.
             return self._error(str(exc))
         reply: dict[str, object] = {
             "action": action,
+            "scope": scope,
             "repo": str(enablement.root),
-            # Report the observed state, not the intent: a disable that could
-            # not remove the marker must not claim the repo is off.
-            "enabled": enablement.is_enabled(),
+            "enabled": state.on,
+            "status": state.status,
             "marker": str(enablement.marker_path),
+            "deciding_file": (
+                str(state.deciding_file) if state.deciding_file is not None else None
+            ),
+            "shared_guide_loads": state.shared_guide_loads,
         }
-        if proposal is not None:
-            # Only ``enable`` produces a proposal outcome; ``disable`` leaves
-            # this key absent so a caller reading it as a boolean does not
-            # misread a proposal-less disable as a failed one.
-            reply["provider_proposal"] = {
-                "reason": proposal.reason,
-                "provider_written": proposal.provider_written,
-                "detail": proposal.detail,
-            }
         return json.dumps(reply)
 
     @staticmethod
     def _apply(
-        enablement: RepoEnablement, action: Literal["enable", "disable"]
-    ) -> EnableOutcome | None:
-        """Run the requested transition; return the enable outcome, if any.
-
-        ``enable`` produces an :class:`EnableOutcome` from its daemon
-        proposal step; ``disable`` has no daemon interaction and
-        returns ``None``.  Kept as a static return rather than mutated
-        state so :meth:`dispatch` reads as one linear flow.
-        """
+        enablement: RepoEnablement,
+        action: Literal["enable", "disable"],
+        *,
+        refresh: bool,
+        opt_out: bool,
+        clear_opt_out: bool,
+    ) -> EffectiveEnablement:
+        """Run the requested transition and return the resulting effective state."""
         if action == "enable":
-            return enablement.enable()
-        enablement.disable()
-        return None
+            return enablement.enable(refresh=refresh, clear_opt_out=clear_opt_out)
+        return enablement.disable(opt_out=opt_out)
+
+    @staticmethod
+    def dormant_content(name: str) -> list[TextContent] | None:
+        """Return a dormant content reply when vox is off in the current repo."""
+        if name in ("enablement", "status"):
+            return None
+        state = EnablementState.resolve_cwd()
+        if state is None or state.on:
+            return None
+        deciding = str(state.deciding_file) if state.deciding_file is not None else None
+        payload = json.dumps(
+            {
+                "error": (
+                    f"vox is off in this repository ({state.status}); "
+                    "run 'vox enable' or '/vox enable' to enable"
+                ),
+                "enabled": False,
+                "status": state.status,
+                "deciding_file": deciding,
+            }
+        )
+        return [TextContent(type="text", text=payload)]
+
+    @staticmethod
+    def status_fields() -> dict[str, object]:
+        """Return effective enablement fields for ``mic:status`` (TED-24)."""
+        state = EnablementState.resolve_cwd()
+        if state is None:
+            return {
+                "enabled": None,
+                "enablement_status": "no_repo",
+                "deciding_file": None,
+                "shared_guide_loads": False,
+            }
+        return {
+            "enabled": state.on,
+            "enablement_status": state.status,
+            "deciding_file": (
+                str(state.deciding_file) if state.deciding_file is not None else None
+            ),
+            "shared_guide_loads": state.shared_guide_loads,
+        }
 
     @staticmethod
     def _error(message: str) -> str:

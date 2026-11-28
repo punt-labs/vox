@@ -45,11 +45,12 @@ class ClaudeMdImport:
     lock so parallel invocations never lose an update.
     """
 
-    __slots__ = ("_file", "_import_line", "_lock")
+    __slots__ = ("_file", "_import_line", "_lock", "_path")
 
     _file: AtomicFile
     _import_line: str
     _lock: SiblingLock
+    _path: Path
 
     _IMPORT_LINE: ClassVar[re.Pattern[str]] = re.compile(r"@(?:[^\r\n]*\S)?")
 
@@ -60,7 +61,13 @@ class ClaudeMdImport:
         self._file = AtomicFile(host_path)
         self._import_line = import_line
         self._lock = SiblingLock(host_path)
+        self._path = host_path
         return self
+
+    @property
+    def path(self) -> Path:
+        """Return the host file path."""
+        return self._path
 
     @property
     def import_line(self) -> str:
@@ -76,18 +83,19 @@ class ClaudeMdImport:
         return MarkdownDoc(self._file.read()).contains(self._import_line)
 
     def register(self) -> bool:
-        """Append the import line if absent. Return ``True`` if the file changed.
+        """Insert the import line in sorted position if absent. Return whether changed.
 
         Idempotent by exact match net of terminator, top-level only: a line
         already present is a no-op, so re-running ``enable`` never duplicates it
-        (``AppendImport`` 0->1->1). Raises :class:`ValueError` instead of
-        appending an inert line after a fence that never closes.
+        or rewrites the file (TED-12, TED-13). Raises :class:`ValueError`
+        instead of inserting an inert line when the file ends inside a fence
+        that never closes (TED-14).
         """
         with self._lock.held():
             doc = MarkdownDoc(self._file.read())
             if doc.contains(self._import_line):
                 return False
-            self._file.replace(doc.with_appended(self._import_line))
+            self._file.replace(doc.with_inserted(self._import_line))
             return True
 
     def prune(self) -> bool:

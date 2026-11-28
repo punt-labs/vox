@@ -14,10 +14,11 @@ if TYPE_CHECKING:
 __all__ = ["VoxGitignore"]
 
 _LOCAL_IGNORES = (
-    ".punt-labs/vox/vox.local.md",
+    ".punt-labs/**/*.local.*",
     ".punt-labs/local/",
-    "/.CLAUDE.md.punt-import.lock",
-    "/.claude/.settings.json.punt-import.lock",
+    "CLAUDE.local.md",
+    ".claude/settings.local.json",
+    ".*.punt-import.lock",
 )
 
 

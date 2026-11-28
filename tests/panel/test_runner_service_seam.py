@@ -559,7 +559,7 @@ class TestRunnerServiceSeam:
         control_notice = PanelNotice.control_rejected("voice")
         service.note_control_rejected("voice")
         assert service.scene().notice == control_notice
-        path = tmp_path / "vox.md"
+        path = tmp_path / "vox.local.md"
         original = path.read_bytes()
 
         path.write_bytes(b"\xff")
@@ -606,7 +606,7 @@ class TestRunnerServiceSeam:
         service = VoxPanelService(_RosterFailsAfterPrefetch(), store)
         service.prefetch()
         await service.install_scene(cast("LuxClient", _Rest()))
-        path = tmp_path / "vox.md"
+        path = tmp_path / "vox.local.md"
         original = path.read_bytes()
 
         path.write_bytes(bad_config)
@@ -624,7 +624,7 @@ class TestRunnerServiceSeam:
         assert service.scene().voice == "benno"
         assert not service.scene().notice.is_present
 
-    async def test_an_unreadable_local_file_does_not_block_durable_refresh(
+    async def test_an_unreadable_local_file_blocks_strict_refresh(
         self, tmp_path: Path
     ) -> None:
         store = ConfigStore(tmp_path, durable_only=True)
@@ -634,10 +634,9 @@ class TestRunnerServiceSeam:
         await service.install_scene(cast("LuxClient", _Rest()))
 
         (tmp_path / "vox.local.md").write_bytes(b"\xff")
-        store.write_field("voice", "aria")
         assert await service.reconcile()
-        assert service.scene().voice == "aria"
-        assert not service.scene().notice.is_present
+        assert service.scene().voice == "benno"
+        assert service.scene().notice == PanelNotice.config_unreadable()
 
     async def test_a_roster_fetch_failure_during_a_provider_commit_corrects(
         self,

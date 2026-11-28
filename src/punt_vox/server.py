@@ -90,7 +90,8 @@ class _LoggingFastMCP(FastMCP):
             reapply_client_log_level()
             logger.info("mic:%s", name)
             self._reject_unknown_kwargs(name, arguments)
-            return usage.mcp_result(await super().call_tool(name, arguments))
+            out = EnablementTool.dormant_content(name)
+            return usage.mcp_result(out or await super().call_tool(name, arguments))
 
     def _reject_unknown_kwargs(self, name: str, arguments: dict[str, Any]) -> None:
         """Raise ``ToolError`` when *arguments* has a key the tool did not declare."""
@@ -601,8 +602,7 @@ mcp.tool(name=usage.McpTool.music.value)(_music_tool.dispatch)
 # The repo enable/disable tool: one action-dispatched verb writing the same
 # `.punt-labs/vox/enabled` marker `vox enable` writes, so both surfaces agree
 # (tool-enable-disable.md 2.14). Repo file operations, not daemon-owned state.
-_enablement_tool = EnablementTool()
-mcp.tool(name=usage.McpTool.enablement.value)(_enablement_tool.dispatch)
+mcp.tool(name=usage.McpTool.enablement.value)(EnablementTool().dispatch)
 
 
 # The three switch tools -- one MCP tool per engine capability (§4a). Each
@@ -729,7 +729,7 @@ def status() -> str:
         view = MusicStateView.of(_program_tools.status())
     except _DAEMON_ERRORS as exc:
         view = MusicStateView.unavailable(str(exc))
-    return json.dumps(payload | view.to_dict())
+    return json.dumps(EnablementTool.status_fields() | payload | view.to_dict())
 
 
 def _provider_status_block(provider: str | None) -> ProviderReadiness:
