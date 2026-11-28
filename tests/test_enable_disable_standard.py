@@ -417,3 +417,128 @@ def test_purge_refuses_symlinked_punt_labs_ancestor(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="symlinked or external"):
         RepoEnablement.for_repo(repo, scope="project").purge()
     assert (outside / "vox" / "sentinel.txt").exists()
+
+
+@pytest.mark.subprocess
+def test_enabled_dir_resolves_for_freshly_enabled_repo_without_config(
+    tmp_path: Path,
+) -> None:
+    """Hooks resolve default config dir on freshly enabled repo without vox.md."""
+    repo = _init_repo_with_baseline(tmp_path)
+    RepoEnablement.for_repo(repo, scope="local").enable()
+    sub = repo / "sub"
+    sub.mkdir()
+    resolved = ConfigStore.enabled_dir(sub)
+    assert resolved == repo / ".punt-labs" / "vox"
+    assert ConfigStore(resolved).read().notify == "y"
+
+
+@pytest.mark.subprocess
+def test_local_purge_on_project_enabled_repo_keeps_disabled_marker(
+    tmp_path: Path,
+) -> None:
+    """Local purge keeps local/vox/disabled so project-enabled vox stays off."""
+    repo = _init_repo_with_baseline(tmp_path)
+    RepoEnablement.for_repo(repo, scope="project").enable()
+    extra = repo / ".punt-labs" / "local" / "vox" / "extra.txt"
+    extra.parent.mkdir(parents=True, exist_ok=True)
+    extra.write_text("remove me\n", encoding="utf-8")
+
+    state = RepoEnablement.for_repo(repo, scope="local").purge()
+    assert state.on is False
+    assert state.status == "disabled_local"
+    assert (repo / ".punt-labs" / "local" / "vox" / "disabled").exists()
+    assert not extra.exists()
+
+
+@pytest.mark.subprocess
+def test_local_purge_refuses_git_tracked_file_under_local_dir(
+    tmp_path: Path,
+) -> None:
+    """Local purge refuses if any file under .punt-labs/local/vox is tracked."""
+    repo = _init_repo_with_baseline(tmp_path)
+    tracked = repo / ".punt-labs" / "local" / "vox" / "tracked.txt"
+    tracked.parent.mkdir(parents=True, exist_ok=True)
+    tracked.write_text("keep\n", encoding="utf-8")
+    _git(repo, "add", "-f", str(tracked))
+
+    with pytest.raises(ValueError, match="git-tracked"):
+        RepoEnablement.for_repo(repo, scope="local").purge()
+    assert tracked.exists()
+
+
+@pytest.mark.subprocess
+def test_failed_clear_opt_out_keeps_opt_out_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If project enable fails during --clear-opt-out, opt-out stays in place."""
+    repo = _init_repo_with_baseline(tmp_path)
+    RepoEnablement.for_repo(repo, scope="project").disable(opt_out=True)
+
+    def _boom(_self: RepoEnablement, *, refresh: bool) -> None:
+        del refresh
+        msg = "simulated setup failure"
+        raise OSError(msg)
+
+    monkeypatch.setattr(RepoEnablement, "_enable_project", _boom)
+    with pytest.raises(OSError, match="simulated setup failure"):
+        RepoEnablement.for_repo(repo, scope="project").enable(clear_opt_out=True)
+    assert (repo / ".punt-labs" / "vox" / "opt-out").exists()
+    assert EnablementState.resolve(repo).status == "opted_out"
+
+
+@pytest.mark.subprocess
+def test_local_refresh_on_project_enabled_repo_raises(tmp_path: Path) -> None:
+    """Local --refresh refuses when shared project guide is active."""
+    repo = _init_repo_with_baseline(tmp_path)
+    RepoEnablement.for_repo(repo, scope="project").enable()
+    with pytest.raises(ValueError, match="--scope project --refresh"):
+        RepoEnablement.for_repo(repo, scope="local").enable(refresh=True)
+
+
+@pytest.mark.subprocess
+def test_personal_write_skips_gitignore_when_already_ignored(tmp_path: Path) -> None:
+    """Personal setting write does not dirty .gitignore if exclude covers it."""
+    from punt_vox.config_seed import InheritedConfig
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "--quiet", "--template=")
+    exclude = repo / ".git" / "info" / "exclude"
+    exclude.parent.mkdir(parents=True, exist_ok=True)
+    exclude.write_text(".punt-labs/**/*.local.*\n", encoding="utf-8")
+    gitignore = repo / ".gitignore"
+    gitignore.write_text("build/\n", encoding="utf-8")
+
+    InheritedConfig(None).seed(repo, repo / ".punt-labs" / "vox")
+    assert gitignore.read_text(encoding="utf-8") == "build/\n"
+
+
+@pytest.mark.subprocess
+def test_local_disable_leaves_no_lockfiles_for_absent_targets(tmp_path: Path) -> None:
+    """Local disable skips prune/deregister when CLAUDE.local.md/settings absent."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "--quiet", "--template=")
+    (repo / ".gitignore").write_text(".punt-labs/local/\n", encoding="utf-8")
+    (repo / ".punt-labs" / "vox").mkdir(parents=True)
+    (repo / ".punt-labs" / "vox" / "enabled").write_text("on\n", encoding="utf-8")
+
+    RepoEnablement.for_repo(repo, scope="local").disable()
+    assert not (repo / ".CLAUDE.local.md.punt-import.lock").exists()
+    assert not (repo / ".claude").exists()
+
+
+@pytest.mark.subprocess
+def test_doctor_reports_shared_guide_still_loads_when_locally_disabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Doctor reports shared_guide_loads when locally disabled on project repo."""
+    repo = _init_repo_with_baseline(tmp_path)
+    RepoEnablement.for_repo(repo, scope="project").enable()
+    RepoEnablement.for_repo(repo, scope="local").disable()
+
+    monkeypatch.chdir(repo)
+    results = GuideCheck().run()
+    messages = [r.message for r in results]
+    assert any("shared guide still loads" in m for m in messages)

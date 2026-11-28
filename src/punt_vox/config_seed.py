@@ -10,6 +10,7 @@ import tempfile
 from pathlib import Path
 from typing import Self, final
 
+from punt_vox.enablement_state import PersonalTargetGuard
 from punt_vox.gitignore_entry import VoxGitignore
 
 __all__ = ["InheritedConfig"]
@@ -66,7 +67,10 @@ class InheritedConfig:
 
     @staticmethod
     def _ignore_local_state(repo: Path) -> None:
-        """Add vox's local-state rules to *repo*'s ``.gitignore``, or warn."""
+        """Add vox's local-state rules to *repo*'s ``.gitignore`` if needed."""
+        local_cfg = repo / ".punt-labs" / "vox" / "vox.local.md"
+        if PersonalTargetGuard(repo).is_ignored(local_cfg):
+            return
         try:
             VoxGitignore(repo).ensure()
         except ValueError as exc:

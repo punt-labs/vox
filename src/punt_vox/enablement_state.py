@@ -20,8 +20,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Self, final
 
-from punt_vox.dirs import find_repo_root
-
 __all__ = [
     "EffectiveEnablement",
     "EnablementScope",
@@ -42,6 +40,12 @@ type EnablementStatus = Literal[
 
 _SHARED_DIR = Path(".punt-labs") / "vox"
 _LOCAL_DIR = Path(".punt-labs") / "local" / "vox"
+
+
+def find_repo_root(start: Path | None = None) -> Path | None:
+    """Walk up from *start* (default: cwd) to find a git repo root."""
+    path = (start or Path.cwd()).resolve()
+    return next((p for p in (path, *path.parents) if (p / ".git").exists()), None)
 
 
 def _is_regular_file(path: Path) -> bool:
@@ -159,6 +163,14 @@ class EnablementState:
             return None
         return cls.resolve(root)
 
+    @classmethod
+    def enabled_config_dir(cls, start: Path | None = None) -> Path | None:
+        """Return ``<repo>/.punt-labs/vox`` if *start* is in an enabled repo."""
+        root = find_repo_root(start)
+        if root is not None and cls.resolve(root).on:
+            return root / _SHARED_DIR
+        return None
+
 
 @final
 class PersonalTargetGuard:
@@ -266,5 +278,54 @@ class PersonalTargetGuard:
             msg = (
                 f"refusing personal-scope operation on {original}: "
                 f"{rel} is tracked in git"
+            )
+            raise ValueError(msg)
+
+    def is_ignored(self, target: Path) -> bool:
+        """Return whether *target* inside the repo is currently ignored by git."""
+        try:
+            rel = target.relative_to(self._repo_root)
+        except ValueError:
+            return False
+        result = subprocess.run(
+            [
+                self._git_bin(),
+                "-C",
+                str(self._repo_root),
+                "check-ignore",
+                "-q",
+                "--",
+                str(rel),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return result.returncode == 0
+
+    def verify_dir_untracked(self, target_dir: Path) -> None:
+        """Raise ``ValueError`` if any file under *target_dir* is tracked in git."""
+        try:
+            rel = target_dir.relative_to(self._repo_root)
+        except ValueError as exc:
+            msg = f"refusing to purge directory outside repo: {target_dir}"
+            raise ValueError(msg) from exc
+        result = subprocess.run(
+            [
+                self._git_bin(),
+                "-C",
+                str(self._repo_root),
+                "ls-files",
+                "--",
+                str(rel),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.stdout.strip():
+            msg = (
+                f"refusing personal-scope purge of {target_dir}: "
+                f"contains git-tracked file(s)"
             )
             raise ValueError(msg)

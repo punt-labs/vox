@@ -189,6 +189,11 @@ class ConfigStore:
         return self
 
     @staticmethod
+    def enabled_dir(start: Path | None = None) -> Path | None:
+        """Return ``<repo>/.punt-labs/vox`` when *start* is in an enabled repo."""
+        return EnablementState.enabled_config_dir(start)
+
+    @staticmethod
     def _repo_name_for(config_dir: Path) -> str | None:
         """Return the repo name only when *config_dir* is a repo's ``.punt-labs/vox``.
 

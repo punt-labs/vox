@@ -228,24 +228,30 @@ class RepoEnablement:
             msg = "--clear-opt-out requires --scope project"
             raise ValueError(msg)
 
-        if self._opt_out.is_present():
-            if not clear_opt_out:
-                msg = (
-                    f"vox is opted out in this repository ({self._opt_out.path}); "
-                    "run 'vox enable --scope project --clear-opt-out' to re-enable"
-                )
-                raise ValueError(msg)
-            self._opt_out.remove()
+        if self._opt_out.is_present() and not clear_opt_out:
+            msg = (
+                f"vox is opted out in this repository ({self._opt_out.path}); "
+                "run 'vox enable --scope project --clear-opt-out' to re-enable"
+            )
+            raise ValueError(msg)
 
         if self._scope == "local":
             self._enable_local(refresh=refresh)
         else:
             self._enable_project(refresh=refresh)
+            if clear_opt_out:
+                self._opt_out.remove()
         return EnablementState.resolve(self._repo_root)
 
     def _enable_local(self, *, refresh: bool) -> None:
         """Execute personal-scope enable (TED-8, TED-9)."""
         if self._shared_marker.is_present():
+            if refresh:
+                msg = (
+                    "shared guide is managed in project scope; "
+                    "run 'vox enable --scope project --refresh' to refresh it"
+                )
+                raise ValueError(msg)
             if self._guard is not None:
                 self._guard.verify(self._local_disabled.path)
             self._local_disabled.remove()
@@ -289,9 +295,11 @@ class RepoEnablement:
                 targets.append(self._local_disabled.path)
             if targets:
                 self._guard.verify(*targets)
-        self._import.prune()
+        if self._import.path.exists():
+            self._import.prune()
         self._marker.remove()
-        self._settings.deregister()
+        if self._settings.path.exists():
+            self._settings.deregister()
         if self._shared_marker.is_present():
             self._local_disabled.write()
 
@@ -306,8 +314,6 @@ class RepoEnablement:
     def purge(self) -> EffectiveEnablement:
         """Disable and delete the scope's vox directory subtree."""
         self.disable()
-        if self._scope == "local":
-            self._local_disabled.remove()
         target_dir = self._marker.path.parent
         repo_resolved = self._repo_root.resolve()
         if target_dir.is_symlink() or (
@@ -316,6 +322,21 @@ class RepoEnablement:
         ):
             msg = f"refusing to purge symlinked or external directory {target_dir}"
             raise ValueError(msg)
+        if self._guard is not None and target_dir.exists():
+            self._guard.verify_dir_untracked(target_dir)
         if target_dir.exists():
-            shutil.rmtree(target_dir)
+            self._remove_subtree(target_dir)
         return EnablementState.resolve(self._repo_root)
+
+    def _remove_subtree(self, target_dir: Path) -> None:
+        """Delete *target_dir*, preserving ``local/vox/disabled`` if project-on."""
+        if not (self._scope == "local" and self._shared_marker.is_present()):
+            shutil.rmtree(target_dir)
+            return
+        for entry in target_dir.iterdir():
+            if entry == self._local_disabled.path:
+                continue
+            if entry.is_dir() and not entry.is_symlink():
+                shutil.rmtree(entry)
+            else:
+                entry.unlink()

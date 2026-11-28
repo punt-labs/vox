@@ -67,6 +67,8 @@ class GuideCheck:
             if state.deciding_file is not None
             else state.status
         )
+        if state.shared_guide_loads and not state.on:
+            detail += "; shared guide still loads"
         return CheckResult.ok(f"enablement: {on_off} — {detail}")
 
     @staticmethod
