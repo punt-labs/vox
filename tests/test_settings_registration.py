@@ -57,8 +57,8 @@ def test_register_preserves_existing_entries_and_order(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     assert _reg(tmp_path).register() is True
-    # Appended in order, existing entries untouched.
-    assert _allow(settings) == ["Bash(git:*)", "Read", _ENTRY]
+    # Inserted in sorted position without moving existing entries (TED-25).
+    assert _allow(settings) == ["Bash(git:*)", _ENTRY, "Read"]
 
 
 def test_register_preserves_unrelated_settings_keys(tmp_path: Path) -> None:
@@ -218,8 +218,8 @@ def test_register_creates_absent_allow_key(tmp_path: Path) -> None:
 def test_default_rules_allow_each_surface_broadly(tmp_path: Path) -> None:
     assert _default_reg(tmp_path).register() is True
     data = json.loads((tmp_path / ".claude" / "settings.json").read_text())
-    assert data["permissions"]["allow"] == list(VOX_RULES["allow"])
-    assert data["permissions"]["ask"] == list(VOX_RULES["ask"])
+    assert data["permissions"]["allow"] == sorted(VOX_RULES["allow"])
+    assert data["permissions"]["ask"] == sorted(VOX_RULES["ask"])
     assert VOX_RULES["allow"] == (
         "Bash(vox:*)",
         "mcp__plugin_vox_mic__*",

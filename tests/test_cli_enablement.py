@@ -26,7 +26,7 @@ def test_enable_writes_marker_and_import(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _point_repo_at(monkeypatch, tmp_path)
-    result = CliRunner().invoke(app, ["enable"])
+    result = CliRunner().invoke(app, ["enable", "--scope", "project"])
     assert result.exit_code == 0
     assert (tmp_path / ".punt-labs" / "vox" / "enabled").is_file()
     assert _IMPORT in (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
@@ -36,7 +36,7 @@ def test_enable_reports_ask_rules_apart_from_allowed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _point_repo_at(monkeypatch, tmp_path)
-    result = CliRunner().invoke(app, ["enable"])
+    result = CliRunner().invoke(app, ["enable", "--scope", "project"])
     assert result.exit_code == 0
     lines = result.output.splitlines()
     allowed = next(line for line in lines if line.startswith("allowed in"))
@@ -51,8 +51,8 @@ def test_disable_removes_marker_leaves_dir(
 ) -> None:
     _point_repo_at(monkeypatch, tmp_path)
     runner = CliRunner()
-    runner.invoke(app, ["enable"])
-    result = runner.invoke(app, ["disable"])
+    runner.invoke(app, ["enable", "--scope", "project"])
+    result = runner.invoke(app, ["disable", "--scope", "project"])
     assert result.exit_code == 0
     assert not (tmp_path / ".punt-labs" / "vox" / "enabled").is_file()
     assert _IMPORT not in (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
@@ -65,8 +65,8 @@ def test_disable_purge_removes_subtree(
 ) -> None:
     _point_repo_at(monkeypatch, tmp_path)
     runner = CliRunner()
-    runner.invoke(app, ["enable"])
-    result = runner.invoke(app, ["disable", "--purge"])
+    runner.invoke(app, ["enable", "--scope", "project"])
+    result = runner.invoke(app, ["disable", "--scope", "project", "--purge"])
     assert result.exit_code == 0
     assert not (tmp_path / ".punt-labs" / "vox").is_dir()
     assert _IMPORT not in (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
@@ -94,7 +94,7 @@ def test_enable_with_symlinked_marker_exits_cleanly_target_intact(
     vox.mkdir(parents=True)
     (vox / "enabled").symlink_to(secret)
 
-    result = CliRunner().invoke(app, ["enable"])
+    result = CliRunner().invoke(app, ["enable", "--scope", "project"])
     assert result.exit_code == 1
     assert "symlink at a tool-owned path" in result.output
     assert "Traceback" not in result.output
@@ -115,7 +115,7 @@ def test_enable_with_malformed_settings_exits_cleanly(
     # it to a clean stderr message and exit 1, never dump a traceback.
     _point_repo_at(monkeypatch, tmp_path)
     _write_malformed_settings(tmp_path)
-    result = CliRunner().invoke(app, ["enable"])
+    result = CliRunner().invoke(app, ["enable", "--scope", "project"])
     assert result.exit_code == 1
     assert "permissions.allow must be a JSON array" in result.output
     assert "Traceback" not in result.output
@@ -128,7 +128,7 @@ def test_disable_with_malformed_settings_exits_cleanly(
     # the CLI maps the ValueError to a clean exit 1, never a traceback.
     _point_repo_at(monkeypatch, tmp_path)
     _write_malformed_settings(tmp_path)
-    result = CliRunner().invoke(app, ["disable"])
+    result = CliRunner().invoke(app, ["disable", "--scope", "project"])
     assert result.exit_code == 1
     assert "permissions.allow must be a JSON array" in result.output
     assert "Traceback" not in result.output
@@ -146,7 +146,7 @@ def test_enable_with_write_failure_exits_cleanly(
         raise PermissionError(13, "Permission denied")
 
     monkeypatch.setattr("punt_vox.tool_owned_file.ToolOwnedFile.write", deny_write)
-    result = CliRunner().invoke(app, ["enable"])
+    result = CliRunner().invoke(app, ["enable", "--scope", "project"])
     assert result.exit_code == 1
     assert "vox: " in result.output
     assert "Permission denied" in result.output

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Self, final
 
-from punt_vox.deposited_files import VoxMarker
-from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_repo_root
+from punt_vox.dirs import find_repo_root
+from punt_vox.enablement_state import EnablementState
 from punt_vox.hook_envelope import HookEnvelope
 
 
@@ -23,13 +23,15 @@ class HookContextAdmission:
         return self
 
     def enabled(self) -> bool:
-        """Classify repository opt-in without reading daemon lifecycle state."""
+        """Classify repository enablement via the single TED-24 resolver."""
         cwd = HookEnvelope.cwd_of(self._payload)
         if cwd is None:
             return False
         root = find_repo_root(cwd)
-        roots = (root,) if root is not None else (cwd, *cwd.parents)
-        return any(
-            VoxMarker(path / DEFAULT_CONFIG_DIR / "enabled", path).is_present()
-            for path in roots
-        )
+        if root is not None:
+            return EnablementState.resolve(root).on
+        for path in (cwd, *cwd.parents):
+            state = EnablementState.resolve(path)
+            if state.deciding_file is not None:
+                return state.on
+        return False

@@ -40,10 +40,10 @@ class TestHookScripts:
 
     @pytest.mark.parametrize("name", _SCRIPTS)
     def test_gate_uses_enabled_marker(self, name: str) -> None:
-        # Per-repo opt-in: an audio hook is silent unless the repo ran
-        # `vox enable` (the marker) and the vox CLI is installed.
+        # Per-repo opt-in: an audio hook is silent unless the effective
+        # enablement gate (TED-24) passes and the vox CLI is installed.
         text = _read(name)
-        assert ".punt-labs/vox/enabled" in text
+        assert "vox_hook_is_enabled" in text
         assert "command -v vox" in text
 
     @pytest.mark.parametrize("name", _SCRIPTS)

@@ -11,11 +11,12 @@ from punt_vox.gitignore_entry import VoxGitignore
 if TYPE_CHECKING:
     from pathlib import Path
 
-_ENTRY = ".punt-labs/vox/vox.local.md"
+_ENTRY = ".punt-labs/**/*.local.*"
 _LOCK_RULES = (
     ".punt-labs/local/",
-    "/.CLAUDE.md.punt-import.lock",
-    "/.claude/.settings.json.punt-import.lock",
+    "CLAUDE.local.md",
+    ".claude/settings.local.json",
+    ".*.punt-import.lock",
 )
 _RULES = (_ENTRY, *_LOCK_RULES)
 
@@ -70,10 +71,12 @@ def test_ensure_refuses_a_symlinked_host(tmp_path: Path) -> None:
 
 
 def test_ensure_appends_only_missing_rules(tmp_path: Path) -> None:
-    original = f"/{_ENTRY}  \r\n.CLAUDE.md.punt-import.lock\r\nnode_modules/"
+    original = f"/{_ENTRY}  \r\n.*.punt-import.lock\r\nnode_modules/"
     _host(tmp_path).write_bytes(original.encode())
     entries = VoxGitignore(tmp_path)
     assert entries.ensure() is True
     assert entries.ensure() is False
-    appended = "\r\n.punt-labs/local/\r\n/.claude/.settings.json.punt-import.lock\r\n"
+    appended = (
+        "\r\n.punt-labs/local/\r\nCLAUDE.local.md\r\n.claude/settings.local.json\r\n"
+    )
     assert _host(tmp_path).read_bytes() == (original + appended).encode()

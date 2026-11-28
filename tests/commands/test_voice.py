@@ -175,7 +175,7 @@ class TestSet:
     ) -> None:
         ctx = _ctx(tmp_path, voices=["marin"])
         ctx.store.write_fields({"provider": "openai", "model": "gpt-4o-mini-tts"})
-        config_path = tmp_path / "vox.md"
+        config_path = tmp_path / "vox.local.md"
         switched = b'---\nprovider: "openai"\nmodel: "tts-1"\nvoice: "alloy"\n---\n'
         acquire = SiblingLock._acquire
 
@@ -194,7 +194,7 @@ class TestSet:
     async def test_checked_write_preserves_uneditable_config(
         self, tmp_path: Path
     ) -> None:
-        config_path = tmp_path / "vox.md"
+        config_path = tmp_path / "vox.local.md"
         original = b'---\nprovider: "elevenlabs"\n'
         config_path.write_bytes(original)
 

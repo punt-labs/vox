@@ -45,7 +45,7 @@ class TestSeed:
 
         def _move_into(staging: Path, own: Path) -> None:
             rules = (repo / ".gitignore").read_text()
-            seen.append(".punt-labs/vox/vox.local.md" in rules)
+            seen.append(".punt-labs/**/*.local.*" in rules)
             move_into(staging, own)
 
         with patch.object(InheritedConfig, "_move_into", staticmethod(_move_into)):
@@ -65,7 +65,7 @@ class TestSeed:
         InheritedConfig(inherited).seed(repo, _own(repo))
         rules = (repo / ".gitignore").read_text().splitlines()
         assert rules[0] == "build/"
-        assert ".punt-labs/vox/vox.local.md" in rules
+        assert ".punt-labs/**/*.local.*" in rules
 
     def test_symlinked_gitignore_is_left_alone_with_a_warning(
         self,

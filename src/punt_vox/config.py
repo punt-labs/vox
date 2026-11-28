@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Self
 
 from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_config_dir
+from punt_vox.enablement_state import EnablementState
 from punt_vox.frontmatter import Frontmatter
 from punt_vox.paths import config_dir as _global_config_dir
 
@@ -29,6 +30,7 @@ __all__ = [
     "DEFAULT_CONFIG_DIR",
     "DURABLE_KEYS",
     "EPHEMERAL_KEYS",
+    "PERSONAL_KEYS",
     "ConfigStore",
     "SpeakMode",
     "VoxConfig",
@@ -37,23 +39,24 @@ __all__ = [
 
 # ── Field-to-file routing ────────────────────────────────────────────
 
-DURABLE_KEYS: frozenset[str] = frozenset(
+# Team-wide durable policy that belongs in tracked ``vox.md``.
+DURABLE_KEYS: frozenset[str] = frozenset({"worker_repos"})
+
+# Per-user preferences: writes always land in gitignored ``vox.local.md`` so
+# personal toggles never dirty a repository; reads fall back to ``vox.md`` so
+# committed team defaults remain honored (tool-enable-disable.md § 2.13).
+PERSONAL_KEYS: frozenset[str] = frozenset(
     {
         "model",
         "notify",
         "provider",
         "speak",
         "voice",
-        "worker_repos",
     }
 )
 
-# Keep vibe mode, mood, tags, and cadence together in ephemeral state so
-# git operations cannot restore a mode inconsistent with the current mood.
-#
-# ``log_level`` is ephemeral for the same reason: a debug toggle a user flips
-# "when needed" belongs in the gitignored vox.local.md, never committed to vox.md
-# where a checkout could resurrect a stale verbose setting.
+# Strictly local session state: never read from or written to ``vox.md``, so
+# git operations cannot resurrect a stale mood or debug log level.
 EPHEMERAL_KEYS: frozenset[str] = frozenset(
     {
         "log_level",
@@ -64,7 +67,9 @@ EPHEMERAL_KEYS: frozenset[str] = frozenset(
     }
 )
 
-ALLOWED_CONFIG_KEYS: frozenset[str] = DURABLE_KEYS | EPHEMERAL_KEYS
+_LOCAL_WRITE_KEYS: frozenset[str] = PERSONAL_KEYS | EPHEMERAL_KEYS
+_DURABLE_READ_KEYS: frozenset[str] = DURABLE_KEYS | PERSONAL_KEYS
+ALLOWED_CONFIG_KEYS: frozenset[str] = DURABLE_KEYS | PERSONAL_KEYS | EPHEMERAL_KEYS
 
 DURABLE_FILENAME = "vox.md"
 EPHEMERAL_FILENAME = "vox.local.md"
@@ -207,37 +212,57 @@ class ConfigStore:
         return self._dir
 
     def read(self) -> VoxConfig:
-        """Read all config fields, merging durable and ephemeral files.
+        """Read all config fields, layering ``vox.local.md`` over ``vox.md``.
 
-        Each file contributes only the keys it owns: durable prefs from
-        ``vox.md``, session state from ``vox.local.md``.  Filtering both
-        sides keeps the split drift-proof -- a stale ``vibe_mode`` left in a
-        committed ``vox.md`` is ignored rather than resurrected.
+        Team policy (``DURABLE_KEYS``) and team defaults (``PERSONAL_KEYS``)
+        load from ``vox.md``. Personal overrides (``PERSONAL_KEYS``) and
+        strictly local session state (``EPHEMERAL_KEYS``) overlay from
+        ``vox.local.md``. Filtering both sides keeps ``EPHEMERAL_KEYS``
+        drift-proof so stale session state in ``vox.md`` is never resurrected.
 
-        Durable-only readers need a confirmed snapshot and never consult
-        the session-state file.
+        When the repository is effectively enabled and neither file sets
+        ``notify``, ``notify`` defaults to ``"y"`` without writing durable
+        config.
         """
         fields: dict[str, str] = {}
 
         durable = self._durable.read_fields(strict=self._durable_only)
-        fields.update({k: v for k, v in durable.items() if k in DURABLE_KEYS})
+        fields.update({k: v for k, v in durable.items() if k in _DURABLE_READ_KEYS})
 
-        if not self._durable_only:
-            local = self._ephemeral.read_fields()
-            fields.update({k: v for k, v in local.items() if k in EPHEMERAL_KEYS})
+        local = self._ephemeral.read_fields(strict=self._durable_only)
+        local_keys = PERSONAL_KEYS if self._durable_only else _LOCAL_WRITE_KEYS
+        fields.update({k: v for k, v in local.items() if k in local_keys})
+
+        if (
+            not self._durable_only
+            and "notify" not in fields
+            and self._is_repo_enabled()
+        ):
+            fields["notify"] = "y"
 
         return VoxConfig.from_fields(
             fields, repo_name=self._repo_name, source=self._ephemeral.path
         )
 
-    def read_field(self, field: str, *, strict: bool = False) -> str | None:
-        """Read a single config field from the correct file.
+    def _is_repo_enabled(self) -> bool:
+        """Return whether this config dir belongs to an enabled repository."""
+        if self._repo_name is None:
+            return False
+        return EnablementState.resolve(self._dir.parent.parent).on
 
-        With *strict*, an unreadable or undecodable file raises instead of
-        reading as absent.
+    def read_field(self, field: str, *, strict: bool = False) -> str | None:
+        """Read a single config field from the appropriate layer.
+
+        ``EPHEMERAL_KEYS`` read only ``vox.local.md``; ``PERSONAL_KEYS`` read
+        ``vox.local.md`` falling back to ``vox.md``; ``DURABLE_KEYS`` read
+        ``vox.md``.
         """
         if field in EPHEMERAL_KEYS:
             return self._ephemeral.read_field(field, strict=strict)
+        if field in PERSONAL_KEYS:
+            local = self._ephemeral.read_field(field, strict=strict)
+            if local is not None:
+                return local
         return self._durable.read_field(field, strict=strict)
 
     @classmethod
@@ -267,6 +292,28 @@ class ConfigStore:
         """Return ``debug`` only when explicitly set, else the quiet ``info``."""
         return "debug" if (raw or "").strip().lower() == "debug" else "info"
 
+    def _layered_check(
+        self, check: Callable[[dict[str, str]], None]
+    ) -> Callable[[dict[str, str]], None]:
+        """Overlay locked local fields onto durable personal defaults for *check*."""
+
+        def _check(held: dict[str, str]) -> None:
+            durable = self._durable.read_fields()
+            defaults = {k: v for k, v in durable.items() if k in PERSONAL_KEYS}
+            check(defaults | held)
+
+        return _check
+
+    def _resolve_check(
+        self,
+        check: Callable[[dict[str, str]], None] | None,
+        store: Frontmatter,
+    ) -> Callable[[dict[str, str]], None] | None:
+        """Return *check* layered over durable personal defaults for local writes."""
+        if check is None or store is not self._ephemeral:
+            return check
+        return self._layered_check(check)
+
     def write_field(
         self,
         key: str,
@@ -277,8 +324,8 @@ class ConfigStore:
     ) -> None:
         """Write one field, optionally checking that file under its write lock."""
         self._reject_unknown(key)
-        store = self._ephemeral if key in EPHEMERAL_KEYS else self._durable
-        store.write_fields({key: value}, check=check)
+        store = self._ephemeral if key in _LOCAL_WRITE_KEYS else self._durable
+        store.write_fields({key: value}, check=self._resolve_check(check, store))
 
     def update_field(
         self,
@@ -294,8 +341,10 @@ class ConfigStore:
         being overwritten. Returns the stored value.
         """
         self._reject_unknown(key)
-        store = self._ephemeral if key in EPHEMERAL_KEYS else self._durable
-        return store.update_field(key, transform, check=check)
+        store = self._ephemeral if key in _LOCAL_WRITE_KEYS else self._durable
+        return store.update_field(
+            key, transform, check=self._resolve_check(check, store)
+        )
 
     def write_fields(
         self,
@@ -309,16 +358,19 @@ class ConfigStore:
             Frontmatter.validate_value(value)
 
         if check is not None and not (
-            updates.keys() <= EPHEMERAL_KEYS or updates.keys() <= DURABLE_KEYS
+            updates.keys() <= _LOCAL_WRITE_KEYS or updates.keys() <= DURABLE_KEYS
         ):
             msg = "A checked config write must target one file."
             raise ValueError(msg)
 
-        routes = ((self._durable, DURABLE_KEYS), (self._ephemeral, EPHEMERAL_KEYS))
+        routes = (
+            (self._durable, DURABLE_KEYS),
+            (self._ephemeral, _LOCAL_WRITE_KEYS),
+        )
         for store, keys in routes:
             subset = {k: v for k, v in updates.items() if k in keys}
             if subset:
-                store.write_fields(subset, check=check)
+                store.write_fields(subset, check=self._resolve_check(check, store))
 
     @staticmethod
     def _reject_unknown(key: str) -> None:

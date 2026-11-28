@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.dirs import find_repo_root
 from punt_vox.doctor_result import CheckResult
+from punt_vox.enablement_state import EffectiveEnablement, EnablementState
 from punt_vox.guide_stamp import GuideStamp, GuideStampVerdict
 
 if TYPE_CHECKING:
@@ -19,7 +20,10 @@ if TYPE_CHECKING:
 
 __all__ = ["GuideCheck"]
 
-_REMEDIATION = " — run 'vox enable' (or mic:enablement action=enable) to refresh"
+_REMEDIATION = (
+    " — run 'vox enable --refresh' (or 'vox enable --scope project --refresh') "
+    "to refresh"
+)
 
 
 @final
@@ -37,54 +41,52 @@ class GuideCheck:
         return super().__new__(cls)
 
     def run(self) -> list[CheckResult]:
-        """Return the guide row, or no row where the check does not apply.
-
-        The check reads the source-hash stamp
-        (:class:`~punt_vox.guide_stamp.GuideStamp`) embedded on deposit and
-        compares it to a fresh hash of the packaged asset. Five verdicts,
-        distinct on purpose:
-
-        * outside a repo, or in a repo with no deposited guide (vox not
-          enabled): no row -- not applicable, not a failure;
-        * packaged asset unreadable: fail -- the vox install is broken, which
-          re-``enable`` cannot fix, so it is reported whatever the deposit holds;
-        * ``AGREE``: pass -- the deposited copy matches the packaged asset;
-        * ``ABSENT_STAMP``: warn -- a copy from before this stamping existed
-          (or one hand-edited beyond recognition). Unknown, not a false pass;
-        * ``DIVERGE``: fail -- the deposit is provably behind the packaged
-          source and re-``enable`` is needed.
-        """
-        deposited = self._deposit_path()
-        if deposited is None:
+        """Return enablement and guide rows, or no rows outside a git repo."""
+        root = find_repo_root()
+        if root is None:
             return []
-        # ``verify`` hashes the packaged asset before it reads the deposit, so a
-        # missing or unreadable asset raises here whatever state the deposit is
-        # in, instead of a verdict whose remedy fails on the same broken install.
+        state = EnablementState.resolve(root)
+        results: list[CheckResult] = [self._enablement_result(state)]
+        deposited = self._deposit_path(root, state.status)
+        if deposited is None:
+            return results
         try:
             verdict = GuideStamp.for_packaged_asset().verify(deposited)
         except OSError as exc:
-            return [self._unreadable_asset(exc)]
-        return [self._result(verdict)]
+            results.append(self._unreadable_asset(exc))
+            return results
+        results.append(self._result(verdict))
+        return results
 
     @staticmethod
-    def _deposit_path() -> Path | None:
-        """Return the repo's deposited guide, or ``None`` where there is none.
+    def _enablement_result(state: EffectiveEnablement) -> CheckResult:
+        """Report the effective enablement state and deciding file (TED-24)."""
+        on_off = "on" if state.on else "off"
+        detail = (
+            f"{state.status} ({state.deciding_file})"
+            if state.deciding_file is not None
+            else state.status
+        )
+        return CheckResult.ok(f"enablement: {on_off} — {detail}")
 
-        ``None`` is the not-applicable contract: outside a repo, vox not enabled
-        here, or a deposit the process cannot even stat. ``is_file`` swallows
-        ENOENT / ENOTDIR / EBADF / ELOOP but propagates OSError variants like
-        PermissionError (an unreadable parent directory); a check whose job is
-        to say the deposit is in a bad state must not crash the whole
-        ``vox doctor`` run when it hits one.
-        """
-        root = find_repo_root()
-        if root is None:
-            return None
-        deposited = root / ".punt-labs" / "vox" / "CLAUDE.md"
-        try:
-            return deposited if deposited.is_file() else None
-        except OSError:
-            return None
+    @staticmethod
+    def _deposit_path(root: Path, status: str) -> Path | None:
+        """Return the active scope's deposited guide, or ``None`` if absent."""
+        candidates = (
+            (root / ".punt-labs" / "local" / "vox" / "CLAUDE.md",)
+            if status == "enabled_local"
+            else (
+                root / ".punt-labs" / "vox" / "CLAUDE.md",
+                root / ".punt-labs" / "local" / "vox" / "CLAUDE.md",
+            )
+        )
+        for deposited in candidates:
+            try:
+                if deposited.is_file():
+                    return deposited
+            except OSError:
+                continue
+        return None
 
     @staticmethod
     def _unreadable_asset(exc: OSError) -> CheckResult:

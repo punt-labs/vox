@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Self, final
+import re
+from typing import TYPE_CHECKING, ClassVar, Self, final
 
 from punt_vox.markdown_fence import CodeBlockMap
 
@@ -18,14 +19,19 @@ class MarkdownDoc:
 
     :class:`~punt_vox.markdown_fence.CodeBlockMap` classifies the lines once at
     construction; :meth:`contains` and :meth:`without` are the two queries the
-    import writer needs, and :meth:`with_appended` refuses to append an import
-    into a fence that never closes, where Claude Code would never load it.
+    import writer needs, and :meth:`with_inserted` places a tool-owned import
+    in sorted order among sibling tool imports (TED-13) while refusing to write
+    into a fence that never closes (TED-14).
     """
 
     __slots__ = ("_blocks", "_lines")
 
     _blocks: CodeBlockMap
     _lines: tuple[str, ...]
+
+    _TOOL_IMPORT: ClassVar[re.Pattern[str]] = re.compile(
+        r"@\.punt-labs/(?:local/)?[a-z0-9-]+/CLAUDE\.md"
+    )
 
     def __new__(cls, text: str) -> Self:
         """Create a markdown doc."""
@@ -59,6 +65,42 @@ class MarkdownDoc:
             for line, top in self._pairs()
             if not (top and self._matches(line, import_line))
         )
+
+    def with_inserted(self, import_line: str) -> str:
+        """Return the document with *import_line* inserted in sorted position.
+
+        Inserts immediately before the first top-level tool-owned import
+        (``@.punt-labs/<tool>/CLAUDE.md`` or ``@.punt-labs/local/<tool>/CLAUDE.md``)
+        that sorts after *import_line* in ascending code-point order, or
+        immediately after the last existing tool-owned import if none sorts
+        after it, or at EOF if the document has no tool-owned imports (TED-13).
+        Existing lines are never moved. Raises :class:`ValueError` when the
+        document ends inside an unclosed fence (TED-14).
+
+        Raises:
+            ValueError: If the document ends inside an unterminated fence.
+        """
+        if self._blocks.open_at_eof:
+            msg = "CLAUDE.md ends inside an unclosed code fence; close it first"
+            raise ValueError(msg)
+        eol = self._eol()
+        tool_indices = [
+            idx
+            for idx, (line, top) in enumerate(self._pairs())
+            if top and self._TOOL_IMPORT.fullmatch(line.rstrip("\r\n")) is not None
+        ]
+        if not tool_indices:
+            return self.with_appended(import_line)
+        lines = list(self._lines)
+        for idx in tool_indices:
+            if lines[idx].rstrip("\r\n") > import_line:
+                lines.insert(idx, f"{import_line}{eol}")
+                return "".join(lines)
+        last = tool_indices[-1]
+        if not lines[last].endswith(("\n", "\r")):
+            lines[last] = f"{lines[last]}{eol}"
+        lines.insert(last + 1, f"{import_line}{eol}")
+        return "".join(lines)
 
     def with_appended(self, import_line: str) -> str:
         """Return the document with *import_line* appended as one bare top-level line.

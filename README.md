@@ -91,7 +91,7 @@ sh install.sh
 - **Spoken notifications** --- a spoken summary when a task finishes, a chime when Claude needs input
 - **Session vibe** --- `/vibe` sets a mood that changes how ElevenLabs voices speak; see [Set the Vibe](#set-the-vibe)
 - **Five providers** --- ElevenLabs, OpenAI, AWS Polly, macOS `say`, and Linux `espeak-ng`; see [Providers](#providers)
-- **Off by default** --- no audio in a repository until you run `/vox enable` there
+- **Off by default** --- hooks are silent and `mic` MCP tools stay dormant in a repository until you run `/vox enable` (or `vox enable`) there; explicit CLI commands like `vox say` still run
 - **Voice or chime** --- `/mute` switches to two notification tones and makes no TTS API calls
 - **Optional for Claude Code** --- Claude Code runs normally when vox is not installed
 - **Claude Code plugin** --- slash commands, hooks, and an MCP server named `mic`
@@ -123,7 +123,7 @@ Vox enabled. You'll hear when tasks finish or need approval.
 Pick a voice with /vox:voice.
 ```
 
-`/vox enable` also changes the repository's `.claude/settings.json`; see [Permissions](#permissions).
+`/vox enable` defaults to personal scope (`--scope local`, gitignored `CLAUDE.local.md` and `.claude/settings.local.json`). Pass `/vox enable project` (or `vox enable --scope project`) to enable vox for the whole repository in `CLAUDE.md` and `.claude/settings.json`; see [Permissions](#permissions).
 
 ### Get a Recap
 

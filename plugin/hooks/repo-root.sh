@@ -7,9 +7,20 @@ vox_hook_git_root() {
   printf '%s\n' "$root"
 }
 
+vox_hook_is_enabled() {
+  local root=$1
+  [ ! -f "$root/.punt-labs/vox/opt-out" ] || return 1
+  [ ! -f "$root/.punt-labs/local/vox/disabled" ] || return 1
+  [ -f "$root/.punt-labs/vox/enabled" ] || [ -f "$root/.punt-labs/local/vox/enabled" ]
+}
+
 vox_hook_marker_root() {
   local dir=$1
-  while [[ ! -f "$dir/.punt-labs/vox/enabled" ]]; do
+  while ! vox_hook_is_enabled "$dir"; do
+    if [ -f "$dir/.punt-labs/vox/opt-out" ] || [ -f "$dir/.punt-labs/local/vox/disabled" ]; then
+      printf '%s\n' "$dir"
+      return 0
+    fi
     [[ "$dir" != / ]] || return 1
     dir=${dir%/*}
     dir=${dir:-/}

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, final
 from punt_vox.cli_daemon import DaemonCli
 from punt_vox.cli_worker_repos import WorkerReposStatus
 from punt_vox.desktop_registration import DesktopRegistration
+from punt_vox.enablement_state import EffectiveEnablement, EnablementState
 from punt_vox.service.daemon_status import DaemonState
 
 if TYPE_CHECKING:
@@ -38,7 +39,9 @@ class StatusCli:
         health = daemon.health
         log_level = health.log_level if health is not None else "unknown"
         workers = WorkerReposStatus(daemon.state)
-        info: dict[str, str | list[str] | None] = {
+        enablement = EnablementState.resolve_cwd()
+        info: dict[str, object] = {
+            **cls._enablement_fields(enablement),
             "daemon": daemon.state.value.replace("_", " "),
             "provider": cfg.provider or "unknown",
             "voice": cfg.voice or None,
@@ -52,7 +55,29 @@ class StatusCli:
             **workers.fields(),
         }
         label = cls._log_label(log_level, daemon.state)
-        formatter.emit(info, cls._text(info, label, workers.label()))
+        formatter.emit(info, cls._text(info, label, workers.label(), enablement))
+
+    @staticmethod
+    def _enablement_fields(
+        enablement: EffectiveEnablement | None,
+    ) -> dict[str, object]:
+        if enablement is None:
+            return {
+                "enabled": None,
+                "enablement_status": "no_repo",
+                "deciding_file": None,
+                "shared_guide_loads": False,
+            }
+        return {
+            "enabled": enablement.on,
+            "enablement_status": enablement.status,
+            "deciding_file": (
+                str(enablement.deciding_file)
+                if enablement.deciding_file is not None
+                else None
+            ),
+            "shared_guide_loads": enablement.shared_guide_loads,
+        }
 
     @staticmethod
     def _log_label(level: str, state: DaemonState) -> str:
@@ -62,11 +87,30 @@ class StatusCli:
         return f"unknown ({reason})"
 
     @staticmethod
+    def _enablement_label(enablement: EffectiveEnablement | None) -> str:
+        if enablement is None:
+            return "outside a git repository"
+        state = "on" if enablement.on else "off"
+        detail = (
+            f"{enablement.status}, {enablement.deciding_file}"
+            if enablement.deciding_file is not None
+            else enablement.status
+        )
+        if enablement.shared_guide_loads and not enablement.on:
+            detail += "; shared guide still loads"
+        return f"{state} ({detail})"
+
+    @classmethod
     def _text(
-        info: dict[str, str | list[str] | None], log_level: str, workers: str
+        cls,
+        info: dict[str, object],
+        log_level: str,
+        workers: str,
+        enablement: EffectiveEnablement | None,
     ) -> str:
         provider = str(info["provider"] or "unknown")
         lines = [
+            f"Enabled:   {cls._enablement_label(enablement)}",
             f"Daemon:    {info['daemon']}",
             f"Provider:  {_PROVIDER_DISPLAY.get(provider, provider)}",
             f"Voice:     {info['voice'] or '(default)'}",

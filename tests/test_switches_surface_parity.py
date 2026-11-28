@@ -239,6 +239,7 @@ def test_provider_set_writes_the_same_field(
 
     # Reset the file and drive the CLI.
     (tmp_path / "vox.md").unlink(missing_ok=True)
+    (tmp_path / "vox.local.md").unlink(missing_ok=True)
     monkeypatch.setattr("punt_vox.dirs.find_config_dir", resolver_at(tmp_path))
     monkeypatch.setattr("punt_vox.dirs.writable_config_dir", resolver_at(tmp_path))
     runner = CliRunner()

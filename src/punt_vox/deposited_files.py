@@ -28,20 +28,45 @@ _MARKER_TEXT = (
     "remove it with `vox disable`, not by hand.\n"
 )
 
+_OPT_OUT_TEXT = (
+    "vox is opted out in this repository.\n"
+    "\n"
+    "Managed by `vox disable --scope project --opt-out`. Clear with\n"
+    "`vox enable --scope project --clear-opt-out`.\n"
+)
+
+_LOCAL_DISABLED_TEXT = (
+    "vox is disabled locally in this checkout.\n"
+    "\n"
+    "Managed by `vox disable` (--scope local). Re-enable with `vox enable`.\n"
+)
+
 
 @final
 class VoxMarker:
-    """The ``.punt-labs/vox/enabled`` marker file -- vox's per-repo on signal."""
+    """An enablement marker file (``enabled``, ``opt-out``, or ``disabled``)."""
 
-    __slots__ = ("_file",)
+    __slots__ = ("_content", "_file")
 
+    _content: str
     _file: ToolOwnedFile
 
-    def __new__(cls, path: Path, base: Path) -> Self:
+    def __new__(cls, path: Path, base: Path, *, content: str = _MARKER_TEXT) -> Self:
         """Create a vox marker."""
         self = super().__new__(cls)
         self._file = ToolOwnedFile(path, base)
+        self._content = content
         return self
+
+    @classmethod
+    def opt_out(cls, path: Path, base: Path) -> Self:
+        """Create a ``.punt-labs/vox/opt-out`` marker."""
+        return cls(path, base, content=_OPT_OUT_TEXT)
+
+    @classmethod
+    def local_disabled(cls, path: Path, base: Path) -> Self:
+        """Create a ``.punt-labs/local/vox/disabled`` marker."""
+        return cls(path, base, content=_LOCAL_DISABLED_TEXT)
 
     @property
     def path(self) -> Path:
@@ -54,7 +79,7 @@ class VoxMarker:
 
     def write(self) -> None:
         """Create the marker, making its directory if absent; refuse a symlink."""
-        self._file.write(_MARKER_TEXT)
+        self._file.write(self._content)
 
     def remove(self) -> None:
         """Delete the marker; an already-absent marker is a clean no-op."""
@@ -63,10 +88,11 @@ class VoxMarker:
 
 @final
 class DepositedGuide:
-    """The surface-aware user guide vox deposits at ``.punt-labs/vox/CLAUDE.md``.
+    """The surface-aware user guide deposited in ``.punt-labs/[local/]vox/CLAUDE.md``.
 
-    The guide is static content shipped beside the package (§ 2.5); ``enable``
-    overwrites it wholesale so it can never drift from the running vox version.
+    The guide is a pinned static copy shipped beside the package (TED-17):
+    plain ``enable`` deposits it only when absent, and ``enable --refresh``
+    rewrites it when its bytes differ (TED-11, TED-12).
     """
 
     __slots__ = ("_file",)
@@ -88,22 +114,18 @@ class DepositedGuide:
         """Return whether the guide file exists."""
         return self._file.is_present()
 
-    def deposit(self) -> None:
-        """Write the guide wholesale, making the dir if absent; refuse a symlink.
+    def deposit(self, *, refresh: bool = False) -> bool:
+        """Deposit the guide if absent, or overwrite when *refresh* is ``True``.
 
-        The deposit is the packaged asset plus a trailing source-hash stamp
-        (:class:`~punt_vox.guide_stamp.GuideStamp`), so ``vox doctor`` can
-        detect a copy that has fallen behind the packaged source without
-        re-hashing the whole file. The stamp is an HTML comment, invisible to a
-        Markdown reader.
-
-        The asset is read in full before the truncating write, so a broken
-        install raises with the reinstall step and leaves any existing deposit
-        byte-identical.
+        Plain ``enable`` preserves an existing deposit so mixed tool versions do
+        not dirty a checkout (TED-9, TED-17). Only ``enable --refresh`` replaces
+        the deposit, skipping the write when bytes already match (TED-12).
 
         Raises:
-            OSError: If neither linking nor copying can deposit the file.
+            OSError: If the packaged asset cannot be read or written.
         """
+        if not refresh and self.is_present():
+            return False
         try:
             text = GuideStamp.for_packaged_asset().stamped()
         except (OSError, UnicodeDecodeError) as exc:
@@ -112,7 +134,7 @@ class DepositedGuide:
                 "reinstall punt-vox"
             )
             raise OSError(msg) from exc
-        self._file.write(text)
+        return self._file.write(text)
 
     def verify(self) -> GuideStampVerdict:
         """Compare this deposit's embedded stamp to the packaged asset."""

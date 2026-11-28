@@ -173,5 +173,9 @@ spikes/vox-bst7-el-convai/agent.json
 
 # Leftover local state from the retired beads tracker
 .beads/
-/.CLAUDE.md.punt-import.lock
-/.claude/.settings.json.punt-import.lock
+
+# Punt Labs tool-enable-disable baseline (TED-20)
+.punt-labs/**/*.local.*
+CLAUDE.local.md
+.claude/settings.local.json
+.*.punt-import.lock
